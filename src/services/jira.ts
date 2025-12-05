@@ -92,10 +92,17 @@ export class JiraService {
   async getAssignedIssues(
     projectKey?: string,
     maxResults: number = 50,
+    includeCompleted: boolean = true,
   ): Promise<JiraSearchResponse> {
-    const jql = projectKey
-      ? `assignee = currentUser() AND project = ${projectKey} ORDER BY updated DESC`
-      : "assignee = currentUser() ORDER BY updated DESC";
+    const conditions = ["assignee = currentUser()"];
+    if (projectKey) {
+      conditions.push(`project = ${projectKey}`);
+    }
+    if (!includeCompleted) {
+      conditions.push("statusCategory != Done");
+    }
+
+    const jql = `${conditions.join(" AND ")} ORDER BY updated DESC`;
 
     return this.searchIssues({
       jql,
