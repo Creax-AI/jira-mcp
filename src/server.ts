@@ -153,6 +153,89 @@ export class JiraMcpServer {
       },
     );
 
+    // Tool to get epics
+    this.server.tool(
+      "get_epics",
+      "Get epics from a Jira project",
+      {
+        projectKey: z
+          .string()
+          .optional()
+          .describe("The key of the Jira project to fetch epics from"),
+        maxResults: z
+          .number()
+          .optional()
+          .describe("Maximum number of results to return"),
+      },
+      async ({ projectKey, maxResults }) => {
+        try {
+          console.log(
+            `Fetching epics${projectKey ? ` for project: ${projectKey}` : ""}`,
+          );
+          const response = await this.jiraService.getEpics(
+            projectKey,
+            maxResults,
+          );
+          console.log(`Successfully fetched ${response.issues.length} epics`);
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
+          };
+        } catch (error) {
+          console.error(`Error fetching epics:`, error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error fetching epics: ${error}`,
+              },
+            ],
+          };
+        }
+      },
+    );
+
+    // Tool to get epic children
+    this.server.tool(
+      "get_epic_children",
+      "Get child issues of a specific epic",
+      {
+        epicKey: z.string().describe("The Jira epic key (e.g., PROJ-123)"),
+        maxResults: z
+          .number()
+          .optional()
+          .describe("Maximum number of results to return"),
+      },
+      async ({ epicKey, maxResults }) => {
+        try {
+          console.log(`Fetching children for epic ${epicKey}`);
+          const response = await this.jiraService.getEpicChildren(
+            epicKey,
+            maxResults,
+          );
+          console.log(
+            `Successfully fetched ${response.issues.length} child issues for ${epicKey}`,
+          );
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
+          };
+        } catch (error) {
+          console.error(`Error fetching epic children for ${epicKey}:`, error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error fetching epic children: ${error}`,
+              },
+            ],
+          };
+        }
+      },
+    );
+
     // Tool to get assigned issues
     this.server.tool(
       "get_assigned_issues",
@@ -337,6 +420,133 @@ export class JiraMcpServer {
           return {
             content: [
               { type: "text", text: `Error fetching issue types: ${error}` },
+            ],
+          };
+        }
+      },
+    );
+
+    // Tool to create a new epic
+    this.server.tool(
+      "create_epic",
+      "Create a new epic in a Jira project",
+      {
+        projectKey: z
+          .string()
+          .describe("The key of the Jira project (e.g., PROJ)"),
+        summary: z.string().describe("The summary/title of the epic"),
+        description: z
+          .string()
+          .optional()
+          .describe("Optional description for the epic"),
+      },
+      async ({ projectKey, summary, description }) => {
+        try {
+          console.log(`Creating epic in project ${projectKey}: ${summary}`);
+          const response = await this.jiraService.createEpic(
+            projectKey,
+            summary,
+            description,
+          );
+          console.log(`Successfully created epic: ${response.key}`);
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
+          };
+        } catch (error) {
+          console.error(`Error creating epic:`, error);
+          return {
+            content: [{ type: "text", text: `Error creating epic: ${error}` }],
+          };
+        }
+      },
+    );
+
+    // Tool to create an issue with a parent (linked to an epic)
+    this.server.tool(
+      "create_issue_with_parent",
+      "Create a new issue linked to a parent epic",
+      {
+        projectKey: z
+          .string()
+          .describe("The key of the Jira project (e.g., PROJ)"),
+        issueType: z
+          .string()
+          .describe("The type of issue to create (e.g., Story, Task, Bug)"),
+        summary: z.string().describe("The summary/title of the issue"),
+        parentKey: z
+          .string()
+          .describe("The key of the parent epic (e.g., PROJ-123)"),
+        description: z
+          .string()
+          .optional()
+          .describe("Optional description for the issue"),
+      },
+      async ({ projectKey, issueType, summary, parentKey, description }) => {
+        try {
+          console.log(
+            `Creating ${issueType} in project ${projectKey} under parent ${parentKey}: ${summary}`,
+          );
+          const response = await this.jiraService.createIssueWithParent(
+            projectKey,
+            issueType,
+            summary,
+            parentKey,
+            description,
+          );
+          console.log(`Successfully created issue: ${response.key}`);
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
+          };
+        } catch (error) {
+          console.error(`Error creating issue with parent:`, error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error creating issue with parent: ${error}`,
+              },
+            ],
+          };
+        }
+      },
+    );
+
+    // Tool to attach an existing issue to an epic
+    this.server.tool(
+      "attach_to_epic",
+      "Link an existing issue to a parent epic",
+      {
+        issueKey: z
+          .string()
+          .describe("The key of the issue to attach (e.g., PROJ-456)"),
+        epicKey: z
+          .string()
+          .describe("The key of the parent epic (e.g., PROJ-123)"),
+      },
+      async ({ issueKey, epicKey }) => {
+        try {
+          console.log(`Attaching issue ${issueKey} to epic ${epicKey}`);
+          await this.jiraService.attachToEpic(issueKey, epicKey);
+          console.log(
+            `Successfully attached issue ${issueKey} to epic ${epicKey}`,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Issue ${issueKey} successfully attached to epic ${epicKey}`,
+              },
+            ],
+          };
+        } catch (error) {
+          console.error(`Error attaching issue to epic:`, error);
+          return {
+            content: [
+              { type: "text", text: `Error attaching issue to epic: ${error}` },
             ],
           };
         }

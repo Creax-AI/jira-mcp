@@ -147,3 +147,9 @@ export interface JiraIssueTypeResponse {
     iconUrl: string;
   }>;
 }
+
+export interface JiraCreateIssueResponse {
+  id: string;
+  key: string;
+  self: string;
+}

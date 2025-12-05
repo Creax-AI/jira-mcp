@@ -2,6 +2,7 @@ import axios, { AxiosError } from "axios";
 import {
   JiraADFDocument,
   JiraComment,
+  JiraCreateIssueResponse,
   JiraError,
   JiraIssue,
   JiraIssueTypeResponse,
@@ -30,7 +31,7 @@ export class JiraService {
 
   private async request<T>(
     endpoint: string,
-    method: "GET" | "POST" = "GET",
+    method: "GET" | "POST" | "PUT" = "GET",
     data?: any,
   ): Promise<T> {
     try {
@@ -44,7 +45,7 @@ export class JiraService {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        data: method === "POST" ? data : undefined,
+        data: method === "POST" || method === "PUT" ? data : undefined,
       };
 
       const response = await axios(config);
@@ -183,6 +184,57 @@ export class JiraService {
   }
 
   /**
+   * Get epics from a project
+   */
+  async getEpics(
+    projectKey?: string,
+    maxResults: number = 50,
+  ): Promise<JiraSearchResponse> {
+    const jql = projectKey
+      ? `project = ${projectKey} AND issuetype = Epic ORDER BY updated DESC`
+      : `issuetype = Epic ORDER BY updated DESC`;
+
+    return this.searchIssues({
+      jql,
+      maxResults,
+      fields: [
+        "summary",
+        "description",
+        "status",
+        "issuetype",
+        "priority",
+        "assignee",
+        "project",
+      ],
+    });
+  }
+
+  /**
+   * Get child issues of an epic
+   */
+  async getEpicChildren(
+    epicKey: string,
+    maxResults: number = 50,
+  ): Promise<JiraSearchResponse> {
+    const jql = `parent = ${epicKey} ORDER BY updated DESC`;
+
+    return this.searchIssues({
+      jql,
+      maxResults,
+      fields: [
+        "summary",
+        "description",
+        "status",
+        "issuetype",
+        "priority",
+        "assignee",
+        "project",
+        "parent",
+      ],
+    });
+  }
+
+  /**
    * Get possible transitions for an issue
    */
   async getIssueTransitions(
@@ -220,6 +272,93 @@ export class JiraService {
     const endpoint = `/rest/api/3/issuetype`;
     const response = await this.request<JiraIssueTypeResponse>(endpoint);
     return response;
+  }
+
+  /**
+   * Create a new epic
+   */
+  async createEpic(
+    projectKey: string,
+    summary: string,
+    description?: string,
+  ): Promise<JiraCreateIssueResponse> {
+    const endpoint = `/rest/api/3/issue`;
+    const payload: any = {
+      fields: {
+        project: {
+          key: projectKey,
+        },
+        summary,
+        issuetype: {
+          name: "Epic",
+        },
+      },
+    };
+
+    if (description) {
+      payload.fields.description = this.createTextADF(description);
+    }
+
+    const response = await this.request<JiraCreateIssueResponse>(
+      endpoint,
+      "POST",
+      payload,
+    );
+    writeLogs(`jira-create-epic-${response.key}.json`, response);
+    return response;
+  }
+
+  /**
+   * Create a new issue with a parent (linked to an epic)
+   */
+  async createIssueWithParent(
+    projectKey: string,
+    issueType: string,
+    summary: string,
+    parentKey: string,
+    description?: string,
+  ): Promise<JiraCreateIssueResponse> {
+    const endpoint = `/rest/api/3/issue`;
+    const payload: any = {
+      fields: {
+        project: {
+          key: projectKey,
+        },
+        summary,
+        issuetype: {
+          name: issueType,
+        },
+        parent: {
+          key: parentKey,
+        },
+      },
+    };
+
+    if (description) {
+      payload.fields.description = this.createTextADF(description);
+    }
+
+    const response = await this.request<JiraCreateIssueResponse>(
+      endpoint,
+      "POST",
+      payload,
+    );
+    writeLogs(`jira-create-issue-${response.key}.json`, response);
+    return response;
+  }
+
+  /**
+   * Attach an existing issue to an epic (set parent)
+   */
+  async attachToEpic(issueKey: string, epicKey: string): Promise<void> {
+    const endpoint = `/rest/api/3/issue/${issueKey}`;
+    await this.request<void>(endpoint, "PUT", {
+      fields: {
+        parent: {
+          key: epicKey,
+        },
+      },
+    });
   }
 }
 
