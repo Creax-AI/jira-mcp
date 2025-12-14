@@ -552,6 +552,45 @@ export class JiraMcpServer {
         }
       },
     );
+
+    // Tool to update an issue description
+    this.server.tool(
+      "update_issue_description",
+      "Replace the description of an existing Jira issue",
+      {
+        issueKey: z
+          .string()
+          .describe("The key of the issue to update (e.g., PROJ-123)"),
+        description: z
+          .string()
+          .min(1)
+          .describe("The new markdown/plain text description to set"),
+      },
+      async ({ issueKey, description }) => {
+        try {
+          console.log(`Updating description for issue ${issueKey}`);
+          await this.jiraService.updateIssueDescription(issueKey, description);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Description for ${issueKey} updated successfully`,
+              },
+            ],
+          };
+        } catch (error) {
+          console.error(`Error updating description for ${issueKey}:`, error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error updating description: ${error}`,
+              },
+            ],
+          };
+        }
+      },
+    );
   }
 
   async connect(transport: Transport): Promise<void> {

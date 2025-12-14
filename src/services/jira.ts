@@ -360,6 +360,25 @@ export class JiraService {
       },
     });
   }
+
+  /**
+   * Update the description of an issue
+   */
+  async updateIssueDescription(
+    issueKey: string,
+    description: string,
+  ): Promise<void> {
+    const content = description.trim();
+    if (!content) {
+      throw new Error("Description text cannot be empty");
+    }
+    const endpoint = `/rest/api/3/issue/${issueKey}`;
+    await this.request<void>(endpoint, "PUT", {
+      fields: {
+        description: this.createTextADF(content),
+      },
+    });
+  }
 }
 
 function writeLogs(name: string, value: any) {

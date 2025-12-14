@@ -213,6 +213,14 @@ Link an existing issue to a parent epic:
 /attach_to_epic issueKey:PROJECT-456 epicKey:PROJECT-100
 ```
 
+### 15. Update Issue Description
+
+Replace the description of an existing Jira issue:
+
+```
+/update_issue_description issueKey:PROJECT-123 description:"New detailed description with acceptance criteria"
+```
+
 ## Command Examples
 
 🚀 **Jira MCP Server + Cursor IDE = Your AI-powered Jira assistant!** Here’s how it makes devs work smarter:
@@ -261,7 +269,11 @@ Keep your epics organized effortlessly!
 → AI transitions the issue through your workflow  
 Update statuses without switching contexts!
 
-🔥 **TL;DR:** Your AI now speaks Jira + Cursor! Fetch projects, filter issues, track changes, manage epics, add comments & fix bugs—all inside your IDE.  
+🖊️ **"Rewrite the description for PROJECT-123 with the new acceptance criteria"**  
+→ AI replaces the issue description in Jira  
+Keep product docs and dev context in sync!
+
+🔥 **TL;DR:** Your AI now speaks Jira + Cursor! Fetch projects, filter issues, track changes, manage epics, add comments, edit descriptions & fix bugs—all inside your IDE.  
 From backlog to bug fixes, MCP Server makes Jira work for you!
 
 ## Example Workflows
@@ -345,6 +357,10 @@ From backlog to bug fixes, MCP Server makes Jira work for you!
 4. Add a comment explaining the change:
    ```
    /add_comment issueKey:PROJECT-123 comment:"Moved to In Progress. Starting implementation today."
+   ```
+5. Update the description with latest details:
+   ```
+   /update_issue_description issueKey:PROJECT-123 description:"Implementation plan: 1) Add API validation 2) Update UI components 3) Add tests"
    ```
 
 ### Focus on Pending Work
