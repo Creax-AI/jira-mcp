@@ -804,6 +804,79 @@ export class JiraMcpServer {
     );
 
     this.server.tool(
+      "start_sprint",
+      "Start a sprint by setting state to active",
+      {
+        sprintId: z.number().describe("Sprint ID to start"),
+        startDate: z
+          .string()
+          .optional()
+          .describe("Sprint start date (ISO 8601)"),
+        endDate: z.string().optional().describe("Sprint end date (ISO 8601)"),
+        goal: z.string().optional().describe("Optional sprint goal"),
+      },
+      async ({ sprintId, startDate, endDate, goal }) => {
+        try {
+          console.log(`Starting sprint ${sprintId}`);
+          const sprint = await this.jiraService.getSprint(sprintId);
+          const response = await this.jiraService.updateSprint(sprintId, {
+            state: "active",
+            startDate: startDate ?? sprint.startDate,
+            endDate: endDate ?? sprint.endDate,
+            goal: goal ?? sprint.goal,
+          });
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
+          };
+        } catch (error) {
+          console.error("Error starting sprint:", error);
+          return {
+            content: [
+              { type: "text", text: `Error starting sprint: ${error}` },
+            ],
+          };
+        }
+      },
+    );
+
+    this.server.tool(
+      "complete_sprint",
+      "Complete a sprint by setting state to closed",
+      {
+        sprintId: z.number().describe("Sprint ID to complete"),
+        completeDate: z
+          .string()
+          .optional()
+          .describe("Sprint completion date (ISO 8601)"),
+        goal: z.string().optional().describe("Optional sprint goal"),
+      },
+      async ({ sprintId, completeDate, goal }) => {
+        try {
+          console.log(`Completing sprint ${sprintId}`);
+          const response = await this.jiraService.updateSprint(sprintId, {
+            state: "closed",
+            completeDate,
+            goal,
+          });
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
+          };
+        } catch (error) {
+          console.error("Error completing sprint:", error);
+          return {
+            content: [
+              { type: "text", text: `Error completing sprint: ${error}` },
+            ],
+          };
+        }
+      },
+    );
+
+    this.server.tool(
       "get_sprint_issues",
       "Get issues for a specific sprint",
       {

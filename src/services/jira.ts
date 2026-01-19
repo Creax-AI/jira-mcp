@@ -534,6 +534,13 @@ export class JiraService {
     return response;
   }
 
+  async getSprint(sprintId: number): Promise<JiraSprint> {
+    const endpoint = `/rest/agile/1.0/sprint/${sprintId}`;
+    const response = await this.request<JiraSprint>(endpoint);
+    writeLogs(`jira-sprint-${sprintId}.json`, response);
+    return response;
+  }
+
   async addIssuesToSprint(sprintId: number, issues: string[]): Promise<void> {
     const endpoint = `/rest/agile/1.0/sprint/${sprintId}/issue`;
     const payload = { issues };
@@ -546,6 +553,26 @@ export class JiraService {
     const payload = { issues };
     await this.request<void>(endpoint, "POST", payload);
     writeLogs(`jira-backlog-move-${new Date().toISOString()}.json`, payload);
+  }
+
+  async updateSprint(
+    sprintId: number,
+    params: {
+      name?: string;
+      goal?: string;
+      startDate?: string;
+      endDate?: string;
+      completeDate?: string;
+      state?: "future" | "active" | "closed";
+    },
+  ): Promise<JiraSprint> {
+    const endpoint = `/rest/agile/1.0/sprint/${sprintId}`;
+    const response = await this.request<JiraSprint>(endpoint, "PUT", params);
+    writeLogs(
+      `jira-sprint-${sprintId}-update-${new Date().toISOString()}.json`,
+      response,
+    );
+    return response;
   }
 
   async getSprintIssues(
