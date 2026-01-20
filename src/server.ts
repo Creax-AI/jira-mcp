@@ -762,6 +762,57 @@ export class JiraMcpServer {
     );
 
     this.server.tool(
+      "get_project_sprint",
+      "Get sprint details and validate it belongs to a project",
+      {
+        projectKeyOrId: z
+          .string()
+          .describe("Project key or ID used to validate sprint ownership"),
+        sprintId: z.number().describe("Sprint ID to fetch"),
+      },
+      async ({ projectKeyOrId, sprintId }) => {
+        try {
+          console.log(`Fetching sprint ${sprintId} for project ${projectKeyOrId}`);
+          const sprint = await this.jiraService.getSprint(sprintId);
+          const board = await this.jiraService.getBoard(sprint.originBoardId);
+          const projectKey = board.location?.projectKey?.toLowerCase();
+          const projectId = board.location?.projectId
+            ? String(board.location.projectId)
+            : undefined;
+          const target = projectKeyOrId.toLowerCase();
+          if (projectKey !== target && projectId !== projectKeyOrId) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Sprint ${sprintId} belongs to board ${board.id} (${projectKey ?? "unknown"}). It does not match project ${projectKeyOrId}.`,
+                },
+              ],
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ sprint, board }, null, 2),
+              },
+            ],
+          };
+        } catch (error) {
+          console.error("Error fetching sprint for project:", error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error fetching sprint for project: ${error}`,
+              },
+            ],
+          };
+        }
+      },
+    );
+
+    this.server.tool(
       "add_issues_to_sprint",
       "Add issues to a sprint",
       {
@@ -1039,6 +1090,83 @@ export class JiraMcpServer {
           return {
             content: [
               { type: "text", text: `Error fetching board sprints: ${error}` },
+            ],
+          };
+        }
+      },
+    );
+
+    this.server.tool(
+      "get_project_sprints",
+      "Get sprints for all boards in a project",
+      {
+        projectKeyOrId: z
+          .string()
+          .describe("Project key or ID to filter boards"),
+        state: z
+          .enum(["future", "active", "closed"])
+          .optional()
+          .describe("Filter sprints by state (future, active, or closed)"),
+        maxResults: z
+          .number()
+          .optional()
+          .describe("Maximum number of sprints per board (default: 50)"),
+        startAt: z
+          .number()
+          .optional()
+          .describe("Starting index per board (default: 0)"),
+      },
+      async ({ projectKeyOrId, state, maxResults, startAt }) => {
+        try {
+          console.log(`Fetching sprints for project ${projectKeyOrId}`);
+          const boardsResponse = await this.jiraService.getAllBoards(
+            50,
+            0,
+            projectKeyOrId,
+          );
+          const results = await Promise.all(
+            boardsResponse.values.map(async (board) => {
+              const sprints = await this.jiraService.getBoardSprints(
+                board.id,
+                state,
+                maxResults ?? 50,
+                startAt ?? 0,
+              );
+              return {
+                board: {
+                  id: board.id,
+                  name: board.name,
+                  type: board.type,
+                  location: board.location,
+                },
+                sprints,
+              };
+            }),
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    projectKeyOrId,
+                    totalBoards: boardsResponse.total,
+                    results,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        } catch (error) {
+          console.error(`Error fetching project sprints for ${projectKeyOrId}:`, error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error fetching project sprints: ${error}`,
+              },
             ],
           };
         }
