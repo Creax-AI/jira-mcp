@@ -52,11 +52,9 @@ A Model Context Protocol (MCP) implementation for Jira that allows you to:
    cp .env.example .env
    ```
 
-4. Edit the `.env` file with your Jira details:
+4. Edit the `.env` file with your server auth token:
    ```
-   JIRA_BASE_URL=https://your-domain.atlassian.net
-   JIRA_USERNAME=your-email@example.com
-   JIRA_API_TOKEN=your-api-token-here
+   MCP_AUTH_TOKEN=change-me
    HTTP_PORT=3000
    ```
 
@@ -82,6 +80,8 @@ npm start
 pnpm start
 ```
 
+Note: In HTTP mode, Jira credentials are provided by each client via headers. The server does not read `JIRA_*` from `.env`.
+
 Or use the CLI mode:
 
 ```bash
@@ -90,12 +90,24 @@ npm run start:cli
 pnpm start:cli
 ```
 
+CLI mode expects `JIRA_BASE_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN` to be provided via environment variables at invocation time.
+
 ### Connecting with Cursor
 
 1. In Cursor, open the Command Palette (Ctrl+Shift+P or Cmd+Shift+P)
 2. Type **"Connect to MCP Server"**
 3. Select **"Connect to MCP Server"**
 4. Enter the server URL (default: `http://localhost:3000/sse`)
+5. Configure these headers in your MCP client (required for HTTP mode):
+   ```
+   Authorization: Bearer <MCP_AUTH_TOKEN>
+   X-Jira-Base-Url: https://your-domain.atlassian.net
+   X-Jira-Username: your-email@example.com
+   X-Jira-Api-Token: your-api-token-here
+   ```
+
+If your MCP client cannot send headers, you can pass the Jira parameters as query parameters on `/sse` (less secure):
+`http://localhost:3000/sse?jiraBaseUrl=...&jiraUsername=...&jiraApiToken=...`
 
 ## Available Tools
 

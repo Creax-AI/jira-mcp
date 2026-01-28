@@ -9,7 +9,6 @@ import { IncomingMessage, ServerResponse } from "http";
 export class JiraMcpServer {
   private readonly server: McpServer;
   private readonly jiraService: JiraService;
-  private sseTransport: SSEServerTransport | null = null;
 
   constructor(jiraUrl: string, username: string, apiToken: string) {
     this.jiraService = new JiraService(jiraUrl, username, apiToken);
@@ -1132,34 +1131,163 @@ export class JiraMcpServer {
     await this.server.connect(transport);
     console.log("Server connected and ready to process requests");
   }
+}
 
-  async startHttpServer(port: number): Promise<void> {
+type JiraClientCredentials = {
+  baseUrl: string;
+  username: string;
+  apiToken: string;
+};
+
+type JiraSessionEntry = {
+  server: JiraMcpServer;
+  transport: SSEServerTransport;
+};
+
+export class JiraMcpHttpServer {
+  private readonly sessions = new Map<string, JiraSessionEntry>();
+  private readonly authTokens: Set<string>;
+
+  constructor(
+    private readonly port: number,
+    authTokens: string[],
+  ) {
+    this.authTokens = new Set(authTokens.filter((token) => token.trim().length > 0));
+  }
+
+  async start(): Promise<void> {
     const app = express();
 
     app.get("/sse", async (req: Request, res: Response) => {
+      if (!this.isAuthorized(req)) {
+        res.sendStatus(401);
+        return;
+      }
+
+      const credentials = readJiraCredentials(req);
+      if (!credentials) {
+        res.status(400).send("Missing Jira credentials");
+        return;
+      }
+
       console.log("New SSE connection established");
-      this.sseTransport = new SSEServerTransport(
+      const server = new JiraMcpServer(
+        credentials.baseUrl,
+        credentials.username,
+        credentials.apiToken,
+      );
+      const transport = new SSEServerTransport(
         "/messages",
         res as unknown as ServerResponse<IncomingMessage>,
       );
-      await this.server.connect(this.sseTransport);
+      const sessionId = getTransportSessionId(transport);
+      if (!sessionId) {
+        console.warn("SSE connection missing session ID; cannot accept messages.");
+        res.sendStatus(500);
+        return;
+      }
+
+      this.sessions.set(sessionId, { server, transport });
+      res.on("close", () => {
+        this.sessions.delete(sessionId);
+      });
+
+      await server.connect(transport);
     });
 
     app.post("/messages", async (req: Request, res: Response) => {
-      if (!this.sseTransport) {
-        res.sendStatus(400);
+      if (!this.isAuthorized(req)) {
+        res.sendStatus(401);
         return;
       }
-      await this.sseTransport.handlePostMessage(
+
+      const sessionId = getSessionIdFromRequest(req);
+      if (!sessionId) {
+        res.status(400).send("Missing sessionId");
+        return;
+      }
+
+      const session = this.sessions.get(sessionId);
+      if (!session) {
+        res.status(404).send("Unknown session");
+        return;
+      }
+
+      await session.transport.handlePostMessage(
         req as unknown as IncomingMessage,
         res as unknown as ServerResponse<IncomingMessage>,
       );
     });
 
-    app.listen(port, () => {
-      console.log(`HTTP server listening on port ${port}`);
-      console.log(`SSE endpoint available at http://localhost:${port}/sse`);
-      console.log(`Message endpoint available at http://localhost:${port}/messages`);
+    app.listen(this.port, () => {
+      console.log(`HTTP server listening on port ${this.port}`);
+      console.log(`SSE endpoint available at http://localhost:${this.port}/sse`);
+      console.log(`Message endpoint available at http://localhost:${this.port}/messages`);
     });
   }
+
+  private isAuthorized(req: Request): boolean {
+    const token = getBearerToken(req);
+    return !!token && this.authTokens.has(token);
+  }
+}
+
+function getBearerToken(req: Request): string | undefined {
+  const header = req.header("authorization");
+  if (!header) {
+    return undefined;
+  }
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : undefined;
+}
+
+function readHeaderOrQuery(
+  req: Request,
+  headerName: string,
+  queryName: string,
+): string | undefined {
+  const headerValue = req.header(headerName);
+  if (headerValue && headerValue.trim()) {
+    return headerValue.trim();
+  }
+
+  const queryValue = req.query[queryName];
+  if (typeof queryValue === "string" && queryValue.trim()) {
+    return queryValue.trim();
+  }
+
+  return undefined;
+}
+
+function readJiraCredentials(req: Request): JiraClientCredentials | null {
+  const baseUrl = readHeaderOrQuery(req, "x-jira-base-url", "jiraBaseUrl");
+  const username = readHeaderOrQuery(req, "x-jira-username", "jiraUsername");
+  const apiToken = readHeaderOrQuery(req, "x-jira-api-token", "jiraApiToken");
+
+  if (!baseUrl || !username || !apiToken) {
+    return null;
+  }
+
+  return {
+    baseUrl,
+    username,
+    apiToken,
+  };
+}
+
+function getSessionIdFromRequest(req: Request): string | undefined {
+  const queryValue = req.query.sessionId;
+  if (typeof queryValue === "string" && queryValue.trim()) {
+    return queryValue.trim();
+  }
+  if (Array.isArray(queryValue) && queryValue[0]) {
+    return String(queryValue[0]);
+  }
+  const header = req.header("mcp-session-id") ?? req.header("x-mcp-session-id");
+  return header?.trim();
+}
+
+function getTransportSessionId(transport: SSEServerTransport): string | undefined {
+  const candidate = (transport as unknown as { sessionId?: string }).sessionId;
+  return candidate?.trim();
 }
