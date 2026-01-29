@@ -4,7 +4,10 @@ import { JiraService } from "./services/jira";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import express, { Request, Response } from "express";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { IncomingMessage, ServerResponse } from "http";
+import { randomUUID } from "node:crypto";
 
 export class JiraMcpServer {
   private readonly server: McpServer;
@@ -1144,8 +1147,14 @@ type JiraSessionEntry = {
   transport: SSEServerTransport;
 };
 
+type JiraStreamableHttpSessionEntry = {
+  server: JiraMcpServer;
+  transport: StreamableHTTPServerTransport;
+};
+
 export class JiraMcpHttpServer {
   private readonly sessions = new Map<string, JiraSessionEntry>();
+  private readonly streamableHttpSessions = new Map<string, JiraStreamableHttpSessionEntry>();
   private readonly authTokens: Set<string>;
 
   constructor(
@@ -1157,6 +1166,89 @@ export class JiraMcpHttpServer {
 
   async start(): Promise<void> {
     const app = express();
+    app.use(express.json({ limit: "4mb" }));
+
+    // Streamable HTTP transport (recommended)
+    app.all("/mcp", async (req: Request, res: Response) => {
+      if (!this.isAuthorized(req)) {
+        res.sendStatus(401);
+        return;
+      }
+
+      try {
+        const headerValue = req.header("mcp-session-id") ?? req.header("x-mcp-session-id");
+        const sessionId = headerValue?.trim();
+        const existingSession = sessionId ? this.streamableHttpSessions.get(sessionId) : undefined;
+
+        if (existingSession) {
+          await existingSession.transport.handleRequest(
+            req as unknown as IncomingMessage,
+            res as unknown as ServerResponse<IncomingMessage>,
+            req.body,
+          );
+          return;
+        }
+
+        const isInit = req.method === "POST" && isInitializeRequest(req.body);
+        if (!isInit) {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32000,
+              message: "Bad Request: No valid session ID provided",
+            },
+            id: null,
+          });
+          return;
+        }
+
+        const credentials = readJiraCredentials(req);
+        if (!credentials) {
+          res.status(400).send("Missing Jira credentials");
+          return;
+        }
+
+        const server = new JiraMcpServer(
+          credentials.baseUrl,
+          credentials.username,
+          credentials.apiToken,
+        );
+
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (sid) => {
+            this.streamableHttpSessions.set(sid, { server, transport });
+          },
+          onsessionclosed: (sid) => {
+            if (sid) this.streamableHttpSessions.delete(sid);
+          },
+        });
+
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid) this.streamableHttpSessions.delete(sid);
+        };
+
+        await server.connect(transport);
+        await transport.handleRequest(
+          req as unknown as IncomingMessage,
+          res as unknown as ServerResponse<IncomingMessage>,
+          req.body,
+        );
+      } catch (error) {
+        console.error("Error handling /mcp request:", error);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32603,
+              message: "Internal server error",
+            },
+            id: null,
+          });
+        }
+      }
+    });
 
     app.get("/sse", async (req: Request, res: Response) => {
       if (!this.isAuthorized(req)) {
@@ -1216,11 +1308,13 @@ export class JiraMcpHttpServer {
       await session.transport.handlePostMessage(
         req as unknown as IncomingMessage,
         res as unknown as ServerResponse<IncomingMessage>,
+        req.body,
       );
     });
 
     app.listen(this.port, () => {
       console.log(`HTTP server listening on port ${this.port}`);
+      console.log(`Streamable HTTP endpoint available at http://localhost:${this.port}/mcp`);
       console.log(`SSE endpoint available at http://localhost:${this.port}/sse`);
       console.log(`Message endpoint available at http://localhost:${this.port}/messages`);
     });
