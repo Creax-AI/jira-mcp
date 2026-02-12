@@ -1,0 +1,14 @@
+name = "jira-context-mcp"
+main = "src/runtimes/worker/entry.ts"
+compatibility_date = "2026-02-09"
+
+[vars]
+MCP_AUTH_TOKEN = "change-me"
+
+[[durable_objects.bindings]]
+name = "JIRA_MCP_SESSIONS"
+class_name = "JiraMcpSessionDurableObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["JiraMcpSessionDurableObject"]

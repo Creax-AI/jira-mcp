@@ -92,6 +92,32 @@ pnpm start:cli
 
 CLI mode expects `JIRA_BASE_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN` to be provided via environment variables at invocation time.
 
+### Running on Cloudflare Workers (Durable Objects)
+
+This repository now includes a Worker runtime with Durable Object-backed MCP session handling for robust, stateful streamable HTTP support.
+
+1. Create your Worker secrets/vars:
+
+   ```bash
+   npx wrangler secret put MCP_AUTH_TOKEN
+   ```
+
+2. Run locally:
+
+   ```bash
+   npm run dev:worker
+   ```
+
+3. Deploy:
+
+   ```bash
+   npm run deploy:worker
+   ```
+
+Worker entrypoint: `src/runtimes/worker/entry.ts`
+
+Durable Object session manager: `src/runtimes/worker/session-do.ts`
+
 ### Connecting with Cursor
 
 1. In Cursor, open the Command Palette (Ctrl+Shift+P or Cmd+Shift+P)
