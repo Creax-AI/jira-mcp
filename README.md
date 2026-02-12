@@ -133,6 +133,37 @@ set -a && source .env.dev && set +a
 npm run smoke:worker
 ```
 
+### User auth (register/login/token)
+
+The Worker runtime now supports user-based API tokens using D1.
+
+1. Create a D1 database:
+
+   ```bash
+   bunx wrangler d1 create jira_mcp_auth
+   ```
+
+2. Add a D1 binding to `wrangler.toml`:
+
+   ```toml
+   [[d1_databases]]
+   binding = "AUTH_DB"
+   database_name = "jira_mcp_auth"
+   database_id = "<DATABASE_ID_FROM_CREATE_OUTPUT>"
+   ```
+
+3. Apply schema:
+
+   ```bash
+   bunx wrangler d1 execute jira_mcp_auth --file migrations/auth/0001_init_auth.sql
+   ```
+
+4. Use auth endpoints:
+   - `POST /auth/register` with `{ "email": "...", "password": "..." }`
+   - `POST /auth/login` with `{ "email": "...", "password": "..." }`
+
+`/auth/login` returns a per-user bearer token (`mcp_...`) that can be used for MCP requests.
+
 ### Connecting with Cursor
 
 1. In Cursor, open the Command Palette (Ctrl+Shift+P or Cmd+Shift+P)

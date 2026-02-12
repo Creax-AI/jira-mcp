@@ -17,6 +17,7 @@ type WorkerEnv = {
 type JiraSessionEntry = {
   server: JiraMcpServer;
   transport: WebStandardStreamableHTTPServerTransport;
+  authUserId?: string;
 };
 
 export class JiraMcpSessionDurableObject {
@@ -38,6 +39,7 @@ export class JiraMcpSessionDurableObject {
 
   private async handleMcpRequest(request: Request): Promise<Response> {
     try {
+      const authUserId = request.headers.get("x-auth-user-id")?.trim() || undefined;
       const parsedBody = await parseJsonBody(request);
       if (parsedBody.invalidJson) {
         return createJsonRpcError(400, -32700, "Parse error: request body must be valid JSON");
@@ -48,6 +50,14 @@ export class JiraMcpSessionDurableObject {
       const existingSession = sessionId ? this.sessions.get(sessionId) : undefined;
 
       if (existingSession) {
+        if (existingSession.authUserId && existingSession.authUserId !== authUserId) {
+          return createJsonRpcError(
+            403,
+            -32003,
+            "Session belongs to a different authenticated user.",
+          );
+        }
+
         return existingSession.transport.handleRequest(request, {
           parsedBody: body,
         });
@@ -88,7 +98,11 @@ export class JiraMcpSessionDurableObject {
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: () => crypto.randomUUID(),
         onsessioninitialized: (sid) => {
-          this.sessions.set(sid, { server, transport });
+          this.sessions.set(sid, {
+            server,
+            transport,
+            authUserId,
+          });
         },
         onsessionclosed: (sid) => {
           if (sid) {
