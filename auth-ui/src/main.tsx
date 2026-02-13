@@ -1,12 +1,17 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
-import { AuthProvider } from "./lib/auth-context";
-import { ProtectedRoute } from "./lib/protected-route";
-import { AuthLayout } from "./ui/layout";
-import { LoginPage } from "./ui/login-page";
-import { RegisterPage } from "./ui/register-page";
-import { McpTestPage } from "./ui/mcp-test-page";
+import {
+  createBrowserRouter,
+  Navigate,
+  RouterProvider,
+} from "react-router-dom";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { AuthProvider } from "@/lib/auth-context";
+import { ProtectedRoute } from "@/lib/protected-route";
+import { AuthLayout } from "@/ui/layout";
+import { LoginPage } from "@/ui/login-page";
+import { RegisterPage } from "@/ui/register-page";
+import { McpTestPage } from "@/ui/mcp-test-page";
 import "./styles.css";
 
 const runtimeBasename =
@@ -54,7 +59,9 @@ const router = createBrowserRouter(
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <AuthProvider>
-      <RouterProvider router={router} future={{ v7_startTransition: true }} />
+      <TooltipProvider>
+        <RouterProvider router={router} future={{ v7_startTransition: true }} />
+      </TooltipProvider>
     </AuthProvider>
   </React.StrictMode>,
 );
