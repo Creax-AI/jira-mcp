@@ -5,11 +5,6 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = true
 
-[vars]
-MCP_AUTH_TOKEN = "change-me"
-HTTP_PORT = "3000"
-BETTER_AUTH_SECRET = "change-me-with-32-plus-characters"
-
 [assets]
 directory = "./auth-ui/dist"
 binding = "AUTH_UI_ASSETS"
@@ -52,11 +47,6 @@ name = "jira-context-mcp-preview"
 workers_dev = true
 preview_urls = true
 routes = []
-
-[env.preview.vars]
-MCP_AUTH_TOKEN = "change-me"
-HTTP_PORT = "3000"
-BETTER_AUTH_SECRET = "change-me-with-32-plus-characters"
 
 [env.preview.assets]
 directory = "./auth-ui/dist"
