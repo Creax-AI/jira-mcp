@@ -5,13 +5,19 @@ import {
   Navigate,
   RouterProvider,
 } from "react-router-dom";
+import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/lib/auth-context";
-import { ProtectedRoute } from "@/lib/protected-route";
-import { AuthLayout } from "@/ui/layout";
-import { LoginPage } from "@/ui/login-page";
-import { RegisterPage } from "@/ui/register-page";
-import { McpTestPage } from "@/ui/mcp-test-page";
+import { RequireAuth } from "@/lib/require-auth";
+import { RedirectIfAuth } from "@/lib/redirect-if-auth";
+import { PublicLayout } from "@/ui/layouts/public-layout";
+import { DashboardLayout } from "@/ui/layouts/dashboard-layout";
+import { LandingPage } from "@/ui/pages/landing-page";
+import { LoginPage } from "@/ui/pages/login-page";
+import { RegisterPage } from "@/ui/pages/register-page";
+import { WorkspacesPage } from "@/ui/pages/workspaces-page";
+import { TokensPage } from "@/ui/pages/tokens-page";
+import { SettingsPage } from "@/ui/pages/settings-page";
 import "./styles.css";
 
 const runtimeBasename =
@@ -20,35 +26,71 @@ const runtimeBasename =
 
 const router = createBrowserRouter(
   [
+    // Public routes with top navbar
     {
-      path: "/",
-      element: <AuthLayout />,
+      element: <PublicLayout />,
       children: [
         {
           index: true,
+          element: <LandingPage />,
+        },
+        {
+          path: "login",
           element: (
-            <ProtectedRoute redirectTo="/token">
-              <Navigate to="/sign-up" replace />
-            </ProtectedRoute>
+            <RedirectIfAuth>
+              <LoginPage />
+            </RedirectIfAuth>
           ),
         },
         {
-          path: "sign-up",
+          path: "register",
           element: (
-            <ProtectedRoute>
+            <RedirectIfAuth>
               <RegisterPage />
-            </ProtectedRoute>
+            </RedirectIfAuth>
           ),
-        },
-        {
-          path: "token",
-          element: <LoginPage />,
-        },
-        {
-          path: "mcp-test",
-          element: <McpTestPage />,
         },
       ],
+    },
+    // Dashboard routes (auth required) with sidebar
+    {
+      path: "dashboard",
+      element: (
+        <RequireAuth>
+          <DashboardLayout />
+        </RequireAuth>
+      ),
+      children: [
+        {
+          index: true,
+          element: <Navigate to="workspaces" replace />,
+        },
+        {
+          path: "workspaces",
+          element: <WorkspacesPage />,
+        },
+        {
+          path: "tokens",
+          element: <TokensPage />,
+        },
+        {
+          path: "settings",
+          element: <SettingsPage />,
+        },
+      ],
+    },
+    // Legacy redirects
+    {
+      path: "sign-up",
+      element: <Navigate to="/register" replace />,
+    },
+    {
+      path: "token",
+      element: <Navigate to="/dashboard/tokens" replace />,
+    },
+    {
+      path: "mcp-test",
+      element: <Navigate to="/dashboard/settings" replace />,
     },
   ],
   {
@@ -61,6 +103,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <AuthProvider>
       <TooltipProvider>
         <RouterProvider router={router} future={{ v7_startTransition: true }} />
+        <Toaster richColors position="top-right" />
       </TooltipProvider>
     </AuthProvider>
   </React.StrictMode>,
