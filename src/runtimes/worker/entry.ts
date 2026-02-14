@@ -5,6 +5,7 @@ import {
   WorkerAuthService,
 } from "./auth-service";
 import { handleBetterAuthRequest, resolveBetterAuthUserFromRequest } from "./auth/better-auth";
+import { resolveInternalSigningSecret, signWorkerToDoRequest } from "./security";
 import { JiraMcpSessionDurableObject } from "./session-do";
 
 type DurableObjectIdLike = unknown;
@@ -26,6 +27,7 @@ type WorkerEnv = {
   AUTH_DB?: D1DatabaseLike;
   BETTER_AUTH_SECRET?: string;
   JIRA_WORKSPACE_ENCRYPTION_KEY?: string;
+  MCP_INTERNAL_SIGNING_SECRET?: string;
   AUTH_UI_URL?: string;
   AUTH_UI_ASSETS?: AssetsBindingLike;
   JIRA_MCP_SESSIONS: DurableObjectNamespaceLike;
@@ -109,10 +111,21 @@ export default {
     }
 
     const requestWithAuthHeaders = attachAuthHeaders(request, authContext, workspaceCredentials);
+    const signingSecret = resolveInternalSigningSecret(env);
+    if (!signingSecret) {
+      return withCorsHeaders(
+        request,
+        new Response("Server misconfigured: missing internal signing secret", {
+          status: 500,
+        }),
+      );
+    }
+
+    const signedRequest = await signWorkerToDoRequest(requestWithAuthHeaders, signingSecret);
 
     const id = env.JIRA_MCP_SESSIONS.idFromName(getSessionHubName(authContext));
     const stub = env.JIRA_MCP_SESSIONS.get(id);
-    return withCorsHeaders(request, await stub.fetch(requestWithAuthHeaders));
+    return withCorsHeaders(request, await stub.fetch(signedRequest));
   },
 };
 

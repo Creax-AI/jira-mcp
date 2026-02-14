@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { JiraMcpServer } from "~/server";
+import { resolveInternalSigningSecret, verifyWorkerToDoRequestSignature } from "./security";
 
 type JiraClientCredentials = {
   baseUrl: string;
@@ -9,6 +10,8 @@ type JiraClientCredentials = {
 };
 
 type WorkerEnv = {
+  MCP_INTERNAL_SIGNING_SECRET?: string;
+  BETTER_AUTH_SECRET?: string;
   MCP_AUTH_TOKEN?: string;
   MCP_AUTH_TOKENS?: string;
   JIRA_MCP_SESSIONS: unknown;
@@ -18,6 +21,8 @@ type JiraSessionEntry = {
   server: JiraMcpServer;
   transport: WebStandardStreamableHTTPServerTransport;
   authUserId?: string;
+  authTokenId?: string;
+  authWorkspaceId?: string;
 };
 
 export class JiraMcpSessionDurableObject {
@@ -39,7 +44,23 @@ export class JiraMcpSessionDurableObject {
 
   private async handleMcpRequest(request: Request): Promise<Response> {
     try {
+      const signingSecret = resolveInternalSigningSecret(this._env);
+      if (!signingSecret) {
+        return createJsonRpcError(
+          500,
+          -32603,
+          "Server misconfigured: missing internal signing secret",
+        );
+      }
+
+      const isTrustedRequest = await verifyWorkerToDoRequestSignature(request, signingSecret);
+      if (!isTrustedRequest) {
+        return createJsonRpcError(401, -32002, "Unauthorized request");
+      }
+
       const authUserId = request.headers.get("x-auth-user-id")?.trim() || undefined;
+      const authTokenId = request.headers.get("x-auth-token-id")?.trim() || undefined;
+      const authWorkspaceId = request.headers.get("x-auth-workspace-id")?.trim() || undefined;
       const parsedBody = await parseJsonBody(request);
       if (parsedBody.invalidJson) {
         return createJsonRpcError(400, -32700, "Parse error: request body must be valid JSON");
@@ -56,6 +77,17 @@ export class JiraMcpSessionDurableObject {
             -32003,
             "Session belongs to a different authenticated user.",
           );
+        }
+
+        if (existingSession.authTokenId && existingSession.authTokenId !== authTokenId) {
+          return createJsonRpcError(403, -32003, "Session belongs to a different auth token.");
+        }
+
+        if (
+          existingSession.authWorkspaceId &&
+          existingSession.authWorkspaceId !== authWorkspaceId
+        ) {
+          return createJsonRpcError(403, -32003, "Session belongs to a different workspace.");
         }
 
         return existingSession.transport.handleRequest(request, {
@@ -102,6 +134,8 @@ export class JiraMcpSessionDurableObject {
             server,
             transport,
             authUserId,
+            authTokenId,
+            authWorkspaceId,
           });
         },
         onsessionclosed: (sid) => {

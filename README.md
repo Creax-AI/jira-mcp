@@ -101,6 +101,7 @@ This repository now includes a Worker runtime with Durable Object-backed MCP ses
    ```bash
    cat > .dev.vars <<'EOF'
    MCP_AUTH_TOKEN=change-me
+   MCP_INTERNAL_SIGNING_SECRET=change-me-with-32-plus-characters
    EOF
    ```
 
@@ -114,6 +115,7 @@ This repository now includes a Worker runtime with Durable Object-backed MCP ses
 
    ```bash
    npx wrangler secret put MCP_AUTH_TOKEN
+   npx wrangler secret put MCP_INTERNAL_SIGNING_SECRET
    ```
 
 4. Deploy:

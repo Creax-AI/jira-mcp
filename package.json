@@ -23,7 +23,7 @@
     "start": "bun dist/index.js",
     "start:cli": "cross-env NODE_ENV=cli bun dist/index.js",
     "start:http": "bun dist/index.js",
-    "dev": "tsx watch src/index.ts",
+    "dev": "bun run dev:auth-ui & bun run dev:worker & wait",
     "dev:http": "tsx watch src/index.ts",
     "dev:worker": "wrangler dev",
     "dev:auth-ui": "bun run --cwd auth-ui dev",
