@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "playwriter": {
+      "type": "local",
+      "enabled": true,
+      "command": [
+        "npx",
+        "playwriter@latest"
+        // "--host",
+        // "100.87.233.53",
+        // "--token",s
+        // "dev-token"
+      ]
+    }
+  }
+}

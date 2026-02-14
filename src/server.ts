@@ -1,20 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { JiraService } from "./services/jira";
+import { JiraLogSink, JiraService } from "./services/jira";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import express, { Request, Response } from "express";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { IncomingMessage, ServerResponse } from "http";
-import { randomUUID } from "node:crypto";
 
 export class JiraMcpServer {
   private readonly server: McpServer;
   private readonly jiraService: JiraService;
 
-  constructor(jiraUrl: string, username: string, apiToken: string) {
-    this.jiraService = new JiraService(jiraUrl, username, apiToken);
+  constructor(
+    jiraUrl: string,
+    username: string,
+    apiToken: string,
+    options?: { logSink?: JiraLogSink },
+  ) {
+    this.jiraService = new JiraService(jiraUrl, username, apiToken, options?.logSink);
     this.server = new McpServer({
       name: "Jira MCP Server",
       version: "0.1.0",
@@ -42,7 +41,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error fetching issue ${issueKey}:`, error);
           return {
-            content: [{ type: "text", text: `Error fetching issue: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error fetching issue: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -67,7 +71,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error adding comment to ${issueKey}:`, error);
           return {
-            content: [{ type: "text", text: `Error adding comment: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error adding comment: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -101,7 +110,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error transitioning issue: ${error}`,
+                text: `Error transitioning issue: ${formatToolError(error)}`,
               },
             ],
           };
@@ -126,7 +135,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error fetching transitions for ${issueKey}:`, error);
           return {
-            content: [{ type: "text", text: `Error fetching transitions: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error fetching transitions: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -157,7 +171,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error fetching epics: ${error}`,
+                text: `Error fetching epics: ${formatToolError(error)}`,
               },
             ],
           };
@@ -187,7 +201,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error fetching epic children: ${error}`,
+                text: `Error fetching epic children: ${formatToolError(error)}`,
               },
             ],
           };
@@ -220,7 +234,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error fetching assigned issues: ${error}`,
+                text: `Error fetching assigned issues: ${formatToolError(error)}`,
               },
             ],
           };
@@ -255,7 +269,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error fetching pending assigned issues: ${error}`,
+                text: `Error fetching pending assigned issues: ${formatToolError(error)}`,
               },
             ],
           };
@@ -293,7 +307,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error fetching issues by type:`, error);
           return {
-            content: [{ type: "text", text: `Error fetching issues by type: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error fetching issues by type: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -311,7 +330,12 @@ export class JiraMcpServer {
       } catch (error) {
         console.error("Error fetching projects:", error);
         return {
-          content: [{ type: "text", text: `Error fetching projects: ${error}` }],
+          content: [
+            {
+              type: "text",
+              text: `Error fetching projects: ${formatToolError(error)}`,
+            },
+          ],
         };
       }
     });
@@ -328,7 +352,12 @@ export class JiraMcpServer {
       } catch (error) {
         console.error("Error fetching issue types:", error);
         return {
-          content: [{ type: "text", text: `Error fetching issue types: ${error}` }],
+          content: [
+            {
+              type: "text",
+              text: `Error fetching issue types: ${formatToolError(error)}`,
+            },
+          ],
         };
       }
     });
@@ -353,7 +382,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error creating epic:`, error);
           return {
-            content: [{ type: "text", text: `Error creating epic: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error creating epic: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -392,7 +426,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error creating issue with parent: ${error}`,
+                text: `Error creating issue with parent: ${formatToolError(error)}`,
               },
             ],
           };
@@ -424,7 +458,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error setting parent issue:`, error);
           return {
-            content: [{ type: "text", text: `Error setting parent issue: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error setting parent issue: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -456,7 +495,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error updating description: ${error}`,
+                text: `Error updating description: ${formatToolError(error)}`,
               },
             ],
           };
@@ -492,7 +531,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error assigning issue: ${error}`,
+                text: `Error assigning issue: ${formatToolError(error)}`,
               },
             ],
           };
@@ -530,7 +569,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error searching users: ${error}`,
+                text: `Error searching users: ${formatToolError(error)}`,
               },
             ],
           };
@@ -564,7 +603,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error fetching issue link types: ${error}`,
+                text: `Error fetching issue link types: ${formatToolError(error)}`,
               },
             ],
           };
@@ -615,7 +654,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error linking issues: ${error}`,
+                text: `Error linking issues: ${formatToolError(error)}`,
               },
             ],
           };
@@ -650,7 +689,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error("Error creating sprint:", error);
           return {
-            content: [{ type: "text", text: `Error creating sprint: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error creating sprint: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -672,7 +716,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error("Error fetching sprint:", error);
           return {
-            content: [{ type: "text", text: `Error fetching sprint: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error fetching sprint: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -719,7 +768,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error fetching sprint for project: ${error}`,
+                text: `Error fetching sprint for project: ${formatToolError(error)}`,
               },
             ],
           };
@@ -752,7 +801,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error("Error adding issues to sprint:", error);
           return {
-            content: [{ type: "text", text: `Error adding issues to sprint: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error adding issues to sprint: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -782,7 +836,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error removing issues from sprint: ${error}`,
+                text: `Error removing issues from sprint: ${formatToolError(error)}`,
               },
             ],
           };
@@ -815,7 +869,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error("Error starting sprint:", error);
           return {
-            content: [{ type: "text", text: `Error starting sprint: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error starting sprint: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -843,7 +902,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error("Error completing sprint:", error);
           return {
-            content: [{ type: "text", text: `Error completing sprint: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error completing sprint: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -879,7 +943,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error("Error fetching sprint issues:", error);
           return {
-            content: [{ type: "text", text: `Error fetching sprint issues: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error fetching sprint issues: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -914,7 +983,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error fetching board issues for ${boardId}:`, error);
           return {
-            content: [{ type: "text", text: `Error fetching board issues: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error fetching board issues: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -953,7 +1027,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error fetching board sprints for ${boardId}:`, error);
           return {
-            content: [{ type: "text", text: `Error fetching board sprints: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error fetching board sprints: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -1019,7 +1098,7 @@ export class JiraMcpServer {
             content: [
               {
                 type: "text",
-                text: `Error fetching project sprints: ${error}`,
+                text: `Error fetching project sprints: ${formatToolError(error)}`,
               },
             ],
           };
@@ -1059,7 +1138,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error moving issues to board ${boardId}:`, error);
           return {
-            content: [{ type: "text", text: `Error moving issues to board: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error moving issues to board: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -1087,7 +1171,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error fetching board details for ${boardId}:`, error);
           return {
-            content: [{ type: "text", text: `Error fetching board details: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error fetching board details: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -1122,7 +1211,12 @@ export class JiraMcpServer {
         } catch (error) {
           console.error(`Error fetching board backlog for ${boardId}:`, error);
           return {
-            content: [{ type: "text", text: `Error fetching board backlog: ${error}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error fetching board backlog: ${formatToolError(error)}`,
+              },
+            ],
           };
         }
       },
@@ -1136,252 +1230,31 @@ export class JiraMcpServer {
   }
 }
 
-type JiraClientCredentials = {
-  baseUrl: string;
-  username: string;
-  apiToken: string;
-};
-
-type JiraSessionEntry = {
-  server: JiraMcpServer;
-  transport: SSEServerTransport;
-};
-
-type JiraStreamableHttpSessionEntry = {
-  server: JiraMcpServer;
-  transport: StreamableHTTPServerTransport;
-};
-
-export class JiraMcpHttpServer {
-  private readonly sessions = new Map<string, JiraSessionEntry>();
-  private readonly streamableHttpSessions = new Map<string, JiraStreamableHttpSessionEntry>();
-  private readonly authTokens: Set<string>;
-
-  constructor(
-    private readonly port: number,
-    authTokens: string[],
-  ) {
-    this.authTokens = new Set(authTokens.filter((token) => token.trim().length > 0));
+function formatToolError(error: unknown): string {
+  if (isStatusError(error)) {
+    return `HTTP ${error.status}: ${error.err}`;
   }
 
-  async start(): Promise<void> {
-    const app = express();
-    app.use(express.json({ limit: "4mb" }));
-
-    // Streamable HTTP transport (recommended)
-    app.all("/mcp", async (req: Request, res: Response) => {
-      if (!this.isAuthorized(req)) {
-        res.sendStatus(401);
-        return;
-      }
-
-      try {
-        const headerValue = req.header("mcp-session-id") ?? req.header("x-mcp-session-id");
-        const sessionId = headerValue?.trim();
-        const existingSession = sessionId ? this.streamableHttpSessions.get(sessionId) : undefined;
-
-        if (existingSession) {
-          await existingSession.transport.handleRequest(
-            req as unknown as IncomingMessage,
-            res as unknown as ServerResponse<IncomingMessage>,
-            req.body,
-          );
-          return;
-        }
-
-        const isInit = req.method === "POST" && isInitializeRequest(req.body);
-        if (!isInit) {
-          res.status(400).json({
-            jsonrpc: "2.0",
-            error: {
-              code: -32000,
-              message: "Bad Request: No valid session ID provided",
-            },
-            id: null,
-          });
-          return;
-        }
-
-        const credentials = readJiraCredentials(req);
-        if (!credentials) {
-          res.status(400).send("Missing Jira credentials");
-          return;
-        }
-
-        const server = new JiraMcpServer(
-          credentials.baseUrl,
-          credentials.username,
-          credentials.apiToken,
-        );
-
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (sid) => {
-            this.streamableHttpSessions.set(sid, { server, transport });
-          },
-          onsessionclosed: (sid) => {
-            if (sid) this.streamableHttpSessions.delete(sid);
-          },
-        });
-
-        transport.onclose = () => {
-          const sid = transport.sessionId;
-          if (sid) this.streamableHttpSessions.delete(sid);
-        };
-
-        await server.connect(transport);
-        await transport.handleRequest(
-          req as unknown as IncomingMessage,
-          res as unknown as ServerResponse<IncomingMessage>,
-          req.body,
-        );
-      } catch (error) {
-        console.error("Error handling /mcp request:", error);
-        if (!res.headersSent) {
-          res.status(500).json({
-            jsonrpc: "2.0",
-            error: {
-              code: -32603,
-              message: "Internal server error",
-            },
-            id: null,
-          });
-        }
-      }
-    });
-
-    app.get("/sse", async (req: Request, res: Response) => {
-      if (!this.isAuthorized(req)) {
-        res.sendStatus(401);
-        return;
-      }
-
-      const credentials = readJiraCredentials(req);
-      if (!credentials) {
-        res.status(400).send("Missing Jira credentials");
-        return;
-      }
-
-      console.log("New SSE connection established");
-      const server = new JiraMcpServer(
-        credentials.baseUrl,
-        credentials.username,
-        credentials.apiToken,
-      );
-      const transport = new SSEServerTransport(
-        "/messages",
-        res as unknown as ServerResponse<IncomingMessage>,
-      );
-      const sessionId = getTransportSessionId(transport);
-      if (!sessionId) {
-        console.warn("SSE connection missing session ID; cannot accept messages.");
-        res.sendStatus(500);
-        return;
-      }
-
-      this.sessions.set(sessionId, { server, transport });
-      res.on("close", () => {
-        this.sessions.delete(sessionId);
-      });
-
-      await server.connect(transport);
-    });
-
-    app.post("/messages", async (req: Request, res: Response) => {
-      if (!this.isAuthorized(req)) {
-        res.sendStatus(401);
-        return;
-      }
-
-      const sessionId = getSessionIdFromRequest(req);
-      if (!sessionId) {
-        res.status(400).send("Missing sessionId");
-        return;
-      }
-
-      const session = this.sessions.get(sessionId);
-      if (!session) {
-        res.status(404).send("Unknown session");
-        return;
-      }
-
-      await session.transport.handlePostMessage(
-        req as unknown as IncomingMessage,
-        res as unknown as ServerResponse<IncomingMessage>,
-        req.body,
-      );
-    });
-
-    app.listen(this.port, () => {
-      console.log(`HTTP server listening on port ${this.port}`);
-      console.log(`Streamable HTTP endpoint available at http://localhost:${this.port}/mcp`);
-      console.log(`SSE endpoint available at http://localhost:${this.port}/sse`);
-      console.log(`Message endpoint available at http://localhost:${this.port}/messages`);
-    });
+  if (error instanceof Error) {
+    return error.message;
   }
 
-  private isAuthorized(req: Request): boolean {
-    const token = getBearerToken(req);
-    return !!token && this.authTokens.has(token);
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
   }
 }
 
-function getBearerToken(req: Request): string | undefined {
-  const header = req.header("authorization");
-  if (!header) {
-    return undefined;
-  }
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  return match ? match[1].trim() : undefined;
-}
-
-function readHeaderOrQuery(
-  req: Request,
-  headerName: string,
-  queryName: string,
-): string | undefined {
-  const headerValue = req.header(headerName);
-  if (headerValue && headerValue.trim()) {
-    return headerValue.trim();
+function isStatusError(value: unknown): value is { status: number; err: string } {
+  if (!value || typeof value !== "object") {
+    return false;
   }
 
-  const queryValue = req.query[queryName];
-  if (typeof queryValue === "string" && queryValue.trim()) {
-    return queryValue.trim();
-  }
-
-  return undefined;
-}
-
-function readJiraCredentials(req: Request): JiraClientCredentials | null {
-  const baseUrl = readHeaderOrQuery(req, "x-jira-base-url", "jiraBaseUrl");
-  const username = readHeaderOrQuery(req, "x-jira-username", "jiraUsername");
-  const apiToken = readHeaderOrQuery(req, "x-jira-api-token", "jiraApiToken");
-
-  if (!baseUrl || !username || !apiToken) {
-    return null;
-  }
-
-  return {
-    baseUrl,
-    username,
-    apiToken,
-  };
-}
-
-function getSessionIdFromRequest(req: Request): string | undefined {
-  const queryValue = req.query.sessionId;
-  if (typeof queryValue === "string" && queryValue.trim()) {
-    return queryValue.trim();
-  }
-  if (Array.isArray(queryValue) && queryValue[0]) {
-    return String(queryValue[0]);
-  }
-  const header = req.header("mcp-session-id") ?? req.header("x-mcp-session-id");
-  return header?.trim();
-}
-
-function getTransportSessionId(transport: SSEServerTransport): string | undefined {
-  const candidate = (transport as unknown as { sessionId?: string }).sessionId;
-  return candidate?.trim();
+  const error = value as { status?: unknown; err?: unknown };
+  return typeof error.status === "number" && typeof error.err === "string";
 }

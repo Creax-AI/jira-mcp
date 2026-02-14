@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import dotenv from "dotenv";
-import { JiraMcpHttpServer, JiraMcpServer } from "./server";
+import { JiraMcpServer } from "./server";
+import { JiraMcpHttpServer } from "./runtimes/node/http-server";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 // Load environment variables

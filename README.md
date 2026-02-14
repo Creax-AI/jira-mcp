@@ -92,12 +92,132 @@ pnpm start:cli
 
 CLI mode expects `JIRA_BASE_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN` to be provided via environment variables at invocation time.
 
+### Running on Cloudflare Workers (Durable Objects)
+
+This repository now includes a Worker runtime with Durable Object-backed MCP session handling for robust, stateful streamable HTTP support.
+
+1. Create a local dev file for Wrangler:
+
+   ```bash
+   cat > .dev.vars <<'EOF'
+   MCP_AUTH_TOKEN=change-me
+   EOF
+   ```
+
+2. Run locally:
+
+   ```bash
+   npm run dev:worker
+   ```
+
+3. Set deploy-time secret:
+
+   ```bash
+   npx wrangler secret put MCP_AUTH_TOKEN
+   ```
+
+4. Deploy:
+
+   ```bash
+   npm run deploy:worker
+   ```
+
+Worker entrypoint: `src/runtimes/worker/entry.ts`
+
+Durable Object session manager: `src/runtimes/worker/session-do.ts`
+
+Optional end-to-end smoke test:
+
+```bash
+set -a && source .env.dev && set +a
+npm run smoke:worker
+```
+
+### User auth (register/login/token)
+
+The Worker runtime now supports user-based API tokens using D1.
+
+1. Create a D1 database:
+
+   ```bash
+   bunx wrangler d1 create jira_mcp_auth
+   ```
+
+2. Add a D1 binding to `wrangler.toml`:
+
+   ```toml
+   [[d1_databases]]
+   binding = "AUTH_DB"
+   database_name = "jira_mcp_auth"
+   database_id = "<DATABASE_ID_FROM_CREATE_OUTPUT>"
+   ```
+
+3. Apply schema:
+
+   ```bash
+   bunx wrangler d1 execute jira_mcp_auth --file migrations/auth/0001_init_auth.sql
+   ```
+
+4. Use auth endpoints:
+   - `POST /auth/register` with `{ "email": "...", "password": "..." }`
+   - `POST /auth/login` with `{ "email": "...", "password": "..." }`
+   - `GET /auth/me` with `Authorization: Bearer mcp_...`
+   - `GET /auth/tokens` with `Authorization: Bearer mcp_...`
+   - `POST /auth/tokens` with `Authorization: Bearer mcp_...`
+   - `POST /auth/tokens/revoke` with `Authorization: Bearer mcp_...` and `{ "tokenId": "..." }`
+
+`/auth/login` returns a per-user bearer token (`mcp_...`) that can be used for MCP requests.
+
+Token persistence behavior:
+
+- Tokens are stored in D1 and remain valid across Worker restarts and deploys.
+- Set `neverExpires: true` (or `expiresInDays: 0`) to issue non-expiring tokens.
+- Revoke tokens with `/auth/tokens/revoke` for immediate invalidation.
+
+If you prefer a browser flow instead of curl, open the auth console UI:
+
+- Run the React app:
+
+  ```bash
+  bun --cwd auth-ui install
+  bun run dev:auth-ui
+  ```
+
+- Open: `http://localhost:5173/auth`
+
+The Vite app uses React Router and proxies `/auth/register`, `/auth/login`, `/mcp`, and `/health` to your Worker runtime.
+
+Proxy target defaults to `http://localhost:8787` and can be changed with:
+
+```bash
+VITE_PROXY_TARGET=https://jira-context-mcp-preview.contacto-80f.workers.dev bun run dev:auth-ui
+```
+
+The auth console lets you register, login, copy user tokens, and run a quick MCP initialize/tools test.
+
+To publish the UI inside the Worker, build and deploy with assets:
+
+```bash
+bun run deploy:worker:with-ui
+```
+
+Preview deploy with UI assets:
+
+```bash
+bun run deploy:worker:preview:with-ui
+```
+
+Published UI path:
+
+- Preview: `https://jira-context-mcp-preview.contacto-80f.workers.dev/auth`
+- Production: `https://jira-mcp-server.creax-ai.com/auth`
+
 ### Connecting with Cursor
 
 1. In Cursor, open the Command Palette (Ctrl+Shift+P or Cmd+Shift+P)
 2. Type **"Connect to MCP Server"**
 3. Select **"Connect to MCP Server"**
-4. Enter the server URL (default: `http://localhost:3000/sse`)
+4. Enter the server URL (recommended: `http://localhost:3000/mcp` for Node or `http://localhost:8787/mcp` for Worker dev)
 5. Configure these headers in your MCP client (required for HTTP mode):
    ```
    Authorization: Bearer <MCP_AUTH_TOKEN>
@@ -106,8 +226,11 @@ CLI mode expects `JIRA_BASE_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN` to be pr
    X-Jira-Api-Token: your-api-token-here
    ```
 
-If your MCP client cannot send headers, you can pass the Jira parameters as query parameters on `/sse` (less secure):
-`http://localhost:3000/sse?jiraBaseUrl=...&jiraUsername=...&jiraApiToken=...`
+If your MCP client cannot send Jira headers, you can pass Jira parameters as query parameters on `/mcp` (less secure):
+`http://localhost:3000/mcp?jiraBaseUrl=...&jiraUsername=...&jiraApiToken=...`
+
+For manual `curl` testing with streamable HTTP, include both content types in `Accept`:
+`Accept: application/json, text/event-stream`
 
 ## Available Tools
 
