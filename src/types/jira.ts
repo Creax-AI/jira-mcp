@@ -147,6 +147,7 @@ export type JiraADFMark =
   | { type: "strong" }
   | { type: "em" }
   | { type: "code" }
+  | { type: "strike" }
   | { type: "link"; attrs: { href: string } };
 
 export interface JiraADFTextNode {
@@ -176,7 +177,7 @@ export interface JiraADFHeadingNode {
 
 export interface JiraADFListItemNode {
   type: "listItem";
-  content: JiraADFParagraphNode[];
+  content: Array<JiraADFParagraphNode | JiraADFBulletListNode | JiraADFOrderedListNode>;
 }
 
 export interface JiraADFBulletListNode {
@@ -192,11 +193,51 @@ export interface JiraADFOrderedListNode {
   content: JiraADFListItemNode[];
 }
 
+export interface JiraADFBlockquoteNode {
+  type: "blockquote";
+  content: JiraADFBlockNode[];
+}
+
+export interface JiraADFCodeBlockNode {
+  type: "codeBlock";
+  attrs?: {
+    language?: string;
+  };
+  content: JiraADFTextNode[];
+}
+
+export interface JiraADFTableCellNode {
+  type: "tableCell";
+  content: JiraADFParagraphNode[];
+}
+
+export interface JiraADFTableHeaderNode {
+  type: "tableHeader";
+  content: JiraADFParagraphNode[];
+}
+
+export interface JiraADFTableRowNode {
+  type: "tableRow";
+  content: Array<JiraADFTableHeaderNode | JiraADFTableCellNode>;
+}
+
+export interface JiraADFTableNode {
+  type: "table";
+  attrs?: {
+    isNumberColumnEnabled?: boolean;
+    layout?: "default" | "wide" | "full-width";
+  };
+  content: JiraADFTableRowNode[];
+}
+
 export type JiraADFBlockNode =
   | JiraADFParagraphNode
   | JiraADFHeadingNode
   | JiraADFBulletListNode
-  | JiraADFOrderedListNode;
+  | JiraADFOrderedListNode
+  | JiraADFBlockquoteNode
+  | JiraADFCodeBlockNode
+  | JiraADFTableNode;
 
 export interface JiraADFDocument {
   type: "doc";

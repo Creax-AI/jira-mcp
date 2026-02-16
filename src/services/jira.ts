@@ -7,6 +7,8 @@ import {
   JiraADFMark,
   JiraADFOrderedListNode,
   JiraADFParagraphNode,
+  JiraADFTableNode,
+  JiraADFTableRowNode,
   JiraBoard,
   JiraBoardConfiguration,
   JiraBoardsResponse,
@@ -107,6 +109,7 @@ export class JiraService {
         textGroup: number;
         hrefGroup?: number;
       }> = [
+        { regex: /^~~([^~]+)~~/, markType: "strike", textGroup: 1 },
         { regex: /^\*\*([^*]+)\*\*/, markType: "strong", textGroup: 1 },
         { regex: /^\*([^*]+)\*/, markType: "em", textGroup: 1 },
         { regex: /^__([^_]+)__/, markType: "strong", textGroup: 1 },
@@ -139,7 +142,7 @@ export class JiraService {
       }
 
       if (!match) {
-        const nextSpecial = remaining.search(/\*\*|\*|__|_|`|\[|\]/);
+        const nextSpecial = remaining.search(/~~|\*\*|\*|__|_|`|\[|\]/);
         if (nextSpecial === -1) {
           if (remaining.length > 0) {
             nodes.push({ type: "text", text: remaining });
@@ -168,15 +171,65 @@ export class JiraService {
     };
   }
 
+  private getLineIndent(line: string): number {
+    const match = line.match(/^(\s*)/);
+    return (match?.[1] ?? "").replace(/\t/g, "  ").length;
+  }
+
+  private splitTableRow(line: string): string[] {
+    const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+    return trimmed.split("|").map((cell) => cell.trim());
+  }
+
+  private isTableSeparator(line: string): boolean {
+    const cells = this.splitTableRow(line);
+    return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+  }
+
+  private buildTableNode(headerLine: string, bodyLines: string[]): JiraADFTableNode {
+    const toParagraph = (value: string): JiraADFParagraphNode => {
+      const inline = this.parseMarkdownInline(value);
+      return {
+        type: "paragraph",
+        content: inline.length ? inline : [{ type: "text", text: "" }],
+      };
+    };
+
+    const headerRow: JiraADFTableRowNode = {
+      type: "tableRow",
+      content: this.splitTableRow(headerLine).map((cell) => ({
+        type: "tableHeader",
+        content: [toParagraph(cell)],
+      })),
+    };
+
+    const bodyRows: JiraADFTableRowNode[] = bodyLines.map((line) => ({
+      type: "tableRow",
+      content: this.splitTableRow(line).map((cell) => ({
+        type: "tableCell",
+        content: [toParagraph(cell)],
+      })),
+    }));
+
+    return {
+      type: "table",
+      attrs: {
+        isNumberColumnEnabled: false,
+        layout: "default",
+      },
+      content: [headerRow, ...bodyRows],
+    };
+  }
+
   private parseMarkdownBlocks(text: string): JiraADFBlockNode[] {
     const lines = text.replace(/\r\n/g, "\n").split("\n");
     const blocks: JiraADFBlockNode[] = [];
     let paragraphLines: string[] = [];
-    let listBuffer: {
+    const listStack: Array<{
       type: "bullet" | "ordered";
-      items: string[];
-      start?: number;
-    } | null = null;
+      indent: number;
+      node: JiraADFBulletListNode | JiraADFOrderedListNode;
+    }> = [];
 
     const flushParagraph = () => {
       if (paragraphLines.length === 0) {
@@ -189,49 +242,214 @@ export class JiraService {
       paragraphLines = [];
     };
 
-    const flushList = () => {
-      if (!listBuffer || listBuffer.items.length === 0) {
-        listBuffer = null;
+    const flushListStack = () => {
+      listStack.length = 0;
+    };
+
+    const getLastListItem = (
+      listNode: JiraADFBulletListNode | JiraADFOrderedListNode,
+    ): JiraADFListItemNode | undefined => {
+      return listNode.content[listNode.content.length - 1];
+    };
+
+    const createListNode = (
+      type: "bullet" | "ordered",
+      start?: number,
+    ): JiraADFBulletListNode | JiraADFOrderedListNode => {
+      if (type === "bullet") {
+        return {
+          type: "bulletList",
+          content: [],
+        };
+      }
+
+      return {
+        type: "orderedList",
+        content: [],
+        attrs: start ? { order: start } : undefined,
+      };
+    };
+
+    const ensureListContext = (
+      type: "bullet" | "ordered",
+      indent: number,
+      start?: number,
+    ): {
+      type: "bullet" | "ordered";
+      indent: number;
+      node: JiraADFBulletListNode | JiraADFOrderedListNode;
+    } => {
+      while (listStack.length > 0 && listStack[listStack.length - 1].indent > indent) {
+        listStack.pop();
+      }
+
+      const current = listStack[listStack.length - 1];
+      if (current && current.indent === indent && current.type === type) {
+        return current;
+      }
+
+      let parent:
+        | {
+            type: "bullet" | "ordered";
+            indent: number;
+            node: JiraADFBulletListNode | JiraADFOrderedListNode;
+          }
+        | undefined;
+
+      if (current && current.indent < indent) {
+        parent = current;
+      } else if (current && current.indent === indent) {
+        listStack.pop();
+        parent = listStack[listStack.length - 1];
+      }
+
+      const node = createListNode(type, start);
+
+      if (!parent) {
+        blocks.push(node);
+      } else {
+        let parentItem = getLastListItem(parent.node);
+        if (!parentItem) {
+          parentItem = {
+            type: "listItem",
+            content: [this.buildParagraph("")],
+          };
+          parent.node.content.push(parentItem);
+        }
+        parentItem.content.push(node);
+      }
+
+      const entry = { type, indent, node };
+      listStack.push(entry);
+      return entry;
+    };
+
+    const appendContinuationToListItem = (
+      entry: {
+        type: "bullet" | "ordered";
+        indent: number;
+        node: JiraADFBulletListNode | JiraADFOrderedListNode;
+      },
+      line: string,
+    ) => {
+      let item = getLastListItem(entry.node);
+      if (!item) {
+        item = {
+          type: "listItem",
+          content: [this.buildParagraph("")],
+        };
+        entry.node.content.push(item);
+      }
+
+      let paragraph = item.content[0];
+      if (!paragraph || paragraph.type !== "paragraph") {
+        paragraph = this.buildParagraph("");
+        item.content.unshift(paragraph);
+      }
+
+      const inline = this.parseMarkdownInline(line.trim());
+      if (inline.length === 0) {
         return;
       }
 
-      const items: JiraADFListItemNode[] = listBuffer.items.map((item) => ({
-        type: "listItem",
-        content: [this.buildParagraph(item)],
-      }));
+      const hasPlaceholder =
+        paragraph.content.length === 1 &&
+        paragraph.content[0].type === "text" &&
+        paragraph.content[0].text === "";
 
-      if (listBuffer.type === "bullet") {
-        const listNode: JiraADFBulletListNode = {
-          type: "bulletList",
-          content: items,
-        };
-        blocks.push(listNode);
-      } else {
-        const listNode: JiraADFOrderedListNode = {
-          type: "orderedList",
-          content: items,
-          attrs: listBuffer.start ? { order: listBuffer.start } : undefined,
-        };
-        blocks.push(listNode);
+      if (hasPlaceholder) {
+        paragraph.content = inline;
+        return;
       }
 
-      listBuffer = null;
+      paragraph.content.push({ type: "hardBreak" });
+      paragraph.content.push(...inline);
     };
 
-    for (const rawLine of lines) {
+    for (let i = 0; i < lines.length; i += 1) {
+      const rawLine = lines[i];
       const line = rawLine.trimEnd();
       const trimmed = line.trim();
 
       if (trimmed.length === 0) {
         flushParagraph();
-        flushList();
+        flushListStack();
+        continue;
+      }
+
+      const codeFenceStart = trimmed.match(/^```([\w-]+)?\s*$/);
+      if (codeFenceStart) {
+        flushParagraph();
+        flushListStack();
+
+        const codeLines: string[] = [];
+        const language = codeFenceStart[1];
+
+        i += 1;
+        while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
+          codeLines.push(lines[i]);
+          i += 1;
+        }
+
+        blocks.push({
+          type: "codeBlock",
+          attrs: language ? { language } : undefined,
+          content: [{ type: "text", text: codeLines.join("\n") }],
+        });
+
+        continue;
+      }
+
+      if (
+        i + 1 < lines.length &&
+        trimmed.includes("|") &&
+        this.isTableSeparator(lines[i + 1].trim())
+      ) {
+        flushParagraph();
+        flushListStack();
+
+        const bodyLines: string[] = [];
+        let cursor = i + 2;
+        while (cursor < lines.length) {
+          const row = lines[cursor].trim();
+          if (row.length === 0 || !row.includes("|")) {
+            break;
+          }
+          bodyLines.push(row);
+          cursor += 1;
+        }
+
+        blocks.push(this.buildTableNode(trimmed, bodyLines));
+        i = cursor - 1;
+
+        continue;
+      }
+
+      if (/^\s*>\s?/.test(line)) {
+        flushParagraph();
+        flushListStack();
+
+        const quoteLines: string[] = [];
+        let cursor = i;
+        while (cursor < lines.length && /^\s*>\s?/.test(lines[cursor])) {
+          quoteLines.push(lines[cursor].replace(/^\s*>\s?/, ""));
+          cursor += 1;
+        }
+
+        const quoteContent = this.parseMarkdownBlocks(quoteLines.join("\n"));
+        blocks.push({
+          type: "blockquote",
+          content: quoteContent,
+        });
+        i = cursor - 1;
+
         continue;
       }
 
       const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
       if (headingMatch) {
         flushParagraph();
-        flushList();
+        flushListStack();
         blocks.push({
           type: "heading",
           attrs: { level: headingMatch[1].length as 1 | 2 | 3 | 4 | 5 | 6 },
@@ -240,47 +458,45 @@ export class JiraService {
         continue;
       }
 
-      const bulletMatch = trimmed.match(/^[-*]\s+(.*)$/);
+      const bulletMatch = line.match(/^(\s*)[-*]\s+(.*)$/);
       if (bulletMatch) {
         flushParagraph();
-        if (listBuffer && listBuffer.type !== "bullet") {
-          flushList();
-        }
-        if (!listBuffer) {
-          listBuffer = { type: "bullet", items: [] };
-        }
-        listBuffer.items.push(bulletMatch[1]);
+        const indent = this.getLineIndent(bulletMatch[1]);
+        const entry = ensureListContext("bullet", indent);
+        entry.node.content.push({
+          type: "listItem",
+          content: [this.buildParagraph(bulletMatch[2])],
+        });
         continue;
       }
 
-      const orderedMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
+      const orderedMatch = line.match(/^(\s*)(\d+)\.\s+(.*)$/);
       if (orderedMatch) {
         flushParagraph();
-        if (listBuffer && listBuffer.type !== "ordered") {
-          flushList();
-        }
-        if (!listBuffer) {
-          listBuffer = {
-            type: "ordered",
-            items: [],
-            start: Number(orderedMatch[1]),
-          };
-        }
-        listBuffer.items.push(orderedMatch[2]);
+        const indent = this.getLineIndent(orderedMatch[1]);
+        const entry = ensureListContext("ordered", indent, Number(orderedMatch[2]));
+        entry.node.content.push({
+          type: "listItem",
+          content: [this.buildParagraph(orderedMatch[3])],
+        });
         continue;
       }
 
-      if (listBuffer) {
-        listBuffer.items[listBuffer.items.length - 1] =
-          `${listBuffer.items[listBuffer.items.length - 1]} ${trimmed}`.trim();
-        continue;
+      if (listStack.length > 0) {
+        const top = listStack[listStack.length - 1];
+        if (this.getLineIndent(line) > top.indent) {
+          appendContinuationToListItem(top, line);
+          continue;
+        }
+
+        flushListStack();
       }
 
       paragraphLines.push(trimmed);
     }
 
     flushParagraph();
-    flushList();
+    flushListStack();
 
     if (blocks.length === 0) {
       return [this.buildParagraph("")];
