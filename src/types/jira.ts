@@ -143,20 +143,65 @@ export interface JiraBoardIssue {
   };
 }
 
+export type JiraADFMark =
+  | { type: "strong" }
+  | { type: "em" }
+  | { type: "code" }
+  | { type: "link"; attrs: { href: string } };
+
 export interface JiraADFTextNode {
   type: "text";
   text: string;
+  marks?: JiraADFMark[];
 }
+
+export interface JiraADFHardBreakNode {
+  type: "hardBreak";
+}
+
+export type JiraADFInlineNode = JiraADFTextNode | JiraADFHardBreakNode;
 
 export interface JiraADFParagraphNode {
   type: "paragraph";
-  content: JiraADFTextNode[];
+  content: JiraADFInlineNode[];
 }
+
+export interface JiraADFHeadingNode {
+  type: "heading";
+  attrs: {
+    level: 1 | 2 | 3 | 4 | 5 | 6;
+  };
+  content: JiraADFInlineNode[];
+}
+
+export interface JiraADFListItemNode {
+  type: "listItem";
+  content: JiraADFParagraphNode[];
+}
+
+export interface JiraADFBulletListNode {
+  type: "bulletList";
+  content: JiraADFListItemNode[];
+}
+
+export interface JiraADFOrderedListNode {
+  type: "orderedList";
+  attrs?: {
+    order?: number;
+  };
+  content: JiraADFListItemNode[];
+}
+
+export type JiraADFBlockNode =
+  | JiraADFParagraphNode
+  | JiraADFHeadingNode
+  | JiraADFBulletListNode
+  | JiraADFOrderedListNode;
 
 export interface JiraADFDocument {
   type: "doc";
   version: 1;
-  content: JiraADFParagraphNode[];
+  content: JiraADFBlockNode[];
 }
 
 export interface JiraComment {

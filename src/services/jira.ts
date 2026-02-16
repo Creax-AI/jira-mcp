@@ -1,5 +1,12 @@
 import {
+  JiraADFBlockNode,
+  JiraADFBulletListNode,
   JiraADFDocument,
+  JiraADFInlineNode,
+  JiraADFListItemNode,
+  JiraADFMark,
+  JiraADFOrderedListNode,
+  JiraADFParagraphNode,
   JiraBoard,
   JiraBoardConfiguration,
   JiraBoardsResponse,
@@ -87,21 +94,206 @@ export class JiraService {
     await this.logSink(name, value);
   }
 
+  private parseMarkdownInline(text: string): JiraADFInlineNode[] {
+    const nodes: JiraADFInlineNode[] = [];
+    let remaining = text;
+
+    while (remaining.length > 0) {
+      let match: RegExpMatchArray | null = null;
+
+      const patterns: Array<{
+        regex: RegExp;
+        markType: JiraADFMark["type"];
+        textGroup: number;
+        hrefGroup?: number;
+      }> = [
+        { regex: /^\*\*([^*]+)\*\*/, markType: "strong", textGroup: 1 },
+        { regex: /^\*([^*]+)\*/, markType: "em", textGroup: 1 },
+        { regex: /^__([^_]+)__/, markType: "strong", textGroup: 1 },
+        { regex: /^_([^_]+)_/, markType: "em", textGroup: 1 },
+        { regex: /^`([^`]+)`/, markType: "code", textGroup: 1 },
+        {
+          regex: /^\[([^\]]+)\]\(([^)]+)\)/,
+          markType: "link",
+          textGroup: 1,
+          hrefGroup: 2,
+        },
+      ];
+
+      for (const pattern of patterns) {
+        match = remaining.match(pattern.regex);
+        if (match) {
+          const mark: JiraADFMark =
+            pattern.markType === "link"
+              ? { type: "link", attrs: { href: match[pattern.hrefGroup ?? 2] } }
+              : { type: pattern.markType };
+
+          nodes.push({
+            type: "text",
+            text: match[pattern.textGroup],
+            marks: [mark],
+          });
+          remaining = remaining.slice(match[0].length);
+          break;
+        }
+      }
+
+      if (!match) {
+        const nextSpecial = remaining.search(/\*\*|\*|__|_|`|\[|\]/);
+        if (nextSpecial === -1) {
+          if (remaining.length > 0) {
+            nodes.push({ type: "text", text: remaining });
+          }
+          break;
+        }
+
+        if (nextSpecial === 0) {
+          nodes.push({ type: "text", text: remaining[0] });
+          remaining = remaining.slice(1);
+        } else {
+          nodes.push({ type: "text", text: remaining.slice(0, nextSpecial) });
+          remaining = remaining.slice(nextSpecial);
+        }
+      }
+    }
+
+    return nodes;
+  }
+
+  private buildParagraph(text: string): JiraADFParagraphNode {
+    const content = this.parseMarkdownInline(text);
+    return {
+      type: "paragraph",
+      content: content.length ? content : [{ type: "text", text: "" }],
+    };
+  }
+
+  private parseMarkdownBlocks(text: string): JiraADFBlockNode[] {
+    const lines = text.replace(/\r\n/g, "\n").split("\n");
+    const blocks: JiraADFBlockNode[] = [];
+    let paragraphLines: string[] = [];
+    let listBuffer: {
+      type: "bullet" | "ordered";
+      items: string[];
+      start?: number;
+    } | null = null;
+
+    const flushParagraph = () => {
+      if (paragraphLines.length === 0) {
+        return;
+      }
+      const content = paragraphLines.join(" ").trim();
+      if (content.length > 0) {
+        blocks.push(this.buildParagraph(content));
+      }
+      paragraphLines = [];
+    };
+
+    const flushList = () => {
+      if (!listBuffer || listBuffer.items.length === 0) {
+        listBuffer = null;
+        return;
+      }
+
+      const items: JiraADFListItemNode[] = listBuffer.items.map((item) => ({
+        type: "listItem",
+        content: [this.buildParagraph(item)],
+      }));
+
+      if (listBuffer.type === "bullet") {
+        const listNode: JiraADFBulletListNode = {
+          type: "bulletList",
+          content: items,
+        };
+        blocks.push(listNode);
+      } else {
+        const listNode: JiraADFOrderedListNode = {
+          type: "orderedList",
+          content: items,
+          attrs: listBuffer.start ? { order: listBuffer.start } : undefined,
+        };
+        blocks.push(listNode);
+      }
+
+      listBuffer = null;
+    };
+
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
+      const trimmed = line.trim();
+
+      if (trimmed.length === 0) {
+        flushParagraph();
+        flushList();
+        continue;
+      }
+
+      const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+      if (headingMatch) {
+        flushParagraph();
+        flushList();
+        blocks.push({
+          type: "heading",
+          attrs: { level: headingMatch[1].length as 1 | 2 | 3 | 4 | 5 | 6 },
+          content: this.parseMarkdownInline(headingMatch[2]),
+        });
+        continue;
+      }
+
+      const bulletMatch = trimmed.match(/^[-*]\s+(.*)$/);
+      if (bulletMatch) {
+        flushParagraph();
+        if (listBuffer && listBuffer.type !== "bullet") {
+          flushList();
+        }
+        if (!listBuffer) {
+          listBuffer = { type: "bullet", items: [] };
+        }
+        listBuffer.items.push(bulletMatch[1]);
+        continue;
+      }
+
+      const orderedMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
+      if (orderedMatch) {
+        flushParagraph();
+        if (listBuffer && listBuffer.type !== "ordered") {
+          flushList();
+        }
+        if (!listBuffer) {
+          listBuffer = {
+            type: "ordered",
+            items: [],
+            start: Number(orderedMatch[1]),
+          };
+        }
+        listBuffer.items.push(orderedMatch[2]);
+        continue;
+      }
+
+      if (listBuffer) {
+        listBuffer.items[listBuffer.items.length - 1] =
+          `${listBuffer.items[listBuffer.items.length - 1]} ${trimmed}`.trim();
+        continue;
+      }
+
+      paragraphLines.push(trimmed);
+    }
+
+    flushParagraph();
+    flushList();
+
+    if (blocks.length === 0) {
+      return [this.buildParagraph("")];
+    }
+
+    return blocks;
+  }
+
   private createTextADF(text: string): JiraADFDocument {
     return {
       type: "doc",
       version: 1,
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            {
-              type: "text",
-              text,
-            },
-          ],
-        },
-      ],
+      content: this.parseMarkdownBlocks(text),
     };
   }
 
