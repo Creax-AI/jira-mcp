@@ -104,13 +104,16 @@ type SessionUserContext = {
   email: string;
 };
 
-type SessionUserResolver = (request: Request) => Promise<SessionUserContext | null>;
+type SessionUserResolver = (
+  request: Request,
+) => Promise<SessionUserContext | null>;
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 10;
 const DEFAULT_TOKEN_TTL_DAYS = 30;
 const MAX_TOKEN_TTL_DAYS = 365;
 const PASSWORD_HASH_ITERATIONS = 100000;
+const SESSION_PLACEHOLDER_HASH_ITERATIONS = 1000;
 const MIN_WORKSPACE_SECRET_LENGTH = 32;
 
 export class WorkerAuthService {
@@ -220,7 +223,12 @@ export class WorkerAuthService {
         jiraApiTokenIv: jiraWorkspacesTable.jiraApiTokenIv,
       })
       .from(jiraWorkspacesTable)
-      .where(and(eq(jiraWorkspacesTable.id, workspaceId), eq(jiraWorkspacesTable.userId, userId)))
+      .where(
+        and(
+          eq(jiraWorkspacesTable.id, workspaceId),
+          eq(jiraWorkspacesTable.userId, userId),
+        ),
+      )
       .limit(1);
 
     const workspace = workspaceRows[0];
@@ -246,7 +254,12 @@ export class WorkerAuthService {
     await db
       .update(jiraWorkspacesTable)
       .set({ lastUsedAt: nowIso() })
-      .where(and(eq(jiraWorkspacesTable.id, workspaceId), eq(jiraWorkspacesTable.userId, userId)));
+      .where(
+        and(
+          eq(jiraWorkspacesTable.id, workspaceId),
+          eq(jiraWorkspacesTable.userId, userId),
+        ),
+      );
 
     return {
       workspaceId: workspace.id,
@@ -279,7 +292,10 @@ export class WorkerAuthService {
         and(
           eq(apiTokensTable.tokenHash, tokenHash),
           isNull(apiTokensTable.revokedAt),
-          or(isNull(apiTokensTable.expiresAt), gt(apiTokensTable.expiresAt, now)),
+          or(
+            isNull(apiTokensTable.expiresAt),
+            gt(apiTokensTable.expiresAt, now),
+          ),
         ),
       )
       .limit(1);
@@ -308,7 +324,8 @@ export class WorkerAuthService {
     const db = this.getDb();
     if (!db) {
       return jsonResponse(503, {
-        error: "Auth is not configured. Bind a D1 database before using /auth routes.",
+        error:
+          "Auth is not configured. Bind a D1 database before using /auth routes.",
       });
     }
 
@@ -367,7 +384,8 @@ export class WorkerAuthService {
     const db = this.getDb();
     if (!db) {
       return jsonResponse(503, {
-        error: "Auth is not configured. Bind a D1 database before using /auth routes.",
+        error:
+          "Auth is not configured. Bind a D1 database before using /auth routes.",
       });
     }
 
@@ -412,7 +430,11 @@ export class WorkerAuthService {
     }
 
     const tokenPlainText = `mcp_${randomBase64Url(32)}`;
-    const issuedToken = await this.issueToken(user.id, tokenPlainText, tokenOptions.value);
+    const issuedToken = await this.issueToken(
+      user.id,
+      tokenPlainText,
+      tokenOptions.value,
+    );
 
     return jsonResponse(200, {
       token: issuedToken.token,
@@ -448,7 +470,8 @@ export class WorkerAuthService {
     const db = this.getDb();
     if (!db) {
       return jsonResponse(503, {
-        error: "Auth is not configured. Bind a D1 database before using /auth routes.",
+        error:
+          "Auth is not configured. Bind a D1 database before using /auth routes.",
       });
     }
 
@@ -470,7 +493,10 @@ export class WorkerAuthService {
         workspaceName: jiraWorkspacesTable.workspaceName,
       })
       .from(apiTokensTable)
-      .leftJoin(jiraWorkspacesTable, eq(jiraWorkspacesTable.id, apiTokensTable.workspaceId))
+      .leftJoin(
+        jiraWorkspacesTable,
+        eq(jiraWorkspacesTable.id, apiTokensTable.workspaceId),
+      )
       .where(eq(apiTokensTable.userId, context.userId))
       .orderBy(desc(apiTokensTable.createdAt))
       .limit(100);
@@ -496,7 +522,8 @@ export class WorkerAuthService {
     const db = this.getDb();
     if (!db) {
       return jsonResponse(503, {
-        error: "Auth is not configured. Bind a D1 database before using /auth routes.",
+        error:
+          "Auth is not configured. Bind a D1 database before using /auth routes.",
       });
     }
 
@@ -536,9 +563,14 @@ export class WorkerAuthService {
     }
 
     const tokenPlainText = `mcp_${randomBase64Url(32)}`;
-    const issuedToken = await this.issueToken(context.userId, tokenPlainText, tokenOptions.value, {
-      workspaceId,
-    });
+    const issuedToken = await this.issueToken(
+      context.userId,
+      tokenPlainText,
+      tokenOptions.value,
+      {
+        workspaceId,
+      },
+    );
 
     return jsonResponse(201, {
       token: issuedToken.token,
@@ -558,7 +590,8 @@ export class WorkerAuthService {
     const db = this.getDb();
     if (!db) {
       return jsonResponse(503, {
-        error: "Auth is not configured. Bind a D1 database before using /auth routes.",
+        error:
+          "Auth is not configured. Bind a D1 database before using /auth routes.",
       });
     }
 
@@ -580,7 +613,12 @@ export class WorkerAuthService {
     const tokens = await db
       .select({ id: apiTokensTable.id, revokedAt: apiTokensTable.revokedAt })
       .from(apiTokensTable)
-      .where(and(eq(apiTokensTable.id, tokenId), eq(apiTokensTable.userId, context.userId)))
+      .where(
+        and(
+          eq(apiTokensTable.id, tokenId),
+          eq(apiTokensTable.userId, context.userId),
+        ),
+      )
       .limit(1);
     const token = tokens[0];
 
@@ -600,7 +638,12 @@ export class WorkerAuthService {
     await db
       .update(apiTokensTable)
       .set({ revokedAt })
-      .where(and(eq(apiTokensTable.id, tokenId), eq(apiTokensTable.userId, context.userId)));
+      .where(
+        and(
+          eq(apiTokensTable.id, tokenId),
+          eq(apiTokensTable.userId, context.userId),
+        ),
+      );
 
     return jsonResponse(200, {
       tokenId,
@@ -613,7 +656,8 @@ export class WorkerAuthService {
     const db = this.getDb();
     if (!db) {
       return jsonResponse(503, {
-        error: "Auth is not configured. Bind a D1 database before using /auth routes.",
+        error:
+          "Auth is not configured. Bind a D1 database before using /auth routes.",
       });
     }
 
@@ -646,7 +690,8 @@ export class WorkerAuthService {
     const db = this.getDb();
     if (!db) {
       return jsonResponse(503, {
-        error: "Auth is not configured. Bind a D1 database before using /auth routes.",
+        error:
+          "Auth is not configured. Bind a D1 database before using /auth routes.",
       });
     }
 
@@ -748,7 +793,8 @@ export class WorkerAuthService {
     const db = this.getDb();
     if (!db) {
       return jsonResponse(503, {
-        error: "Auth is not configured. Bind a D1 database before using /auth routes.",
+        error:
+          "Auth is not configured. Bind a D1 database before using /auth routes.",
       });
     }
 
@@ -818,7 +864,9 @@ export class WorkerAuthService {
     return deriveWorkspaceCryptoKey(secret);
   }
 
-  private async requireUserContext(request: Request): Promise<UserAuthContext | null> {
+  private async requireUserContext(
+    request: Request,
+  ): Promise<UserAuthContext | null> {
     const token = getBearerToken(request);
     if (token) {
       return this.validateUserToken(token);
@@ -872,7 +920,11 @@ export class WorkerAuthService {
     const userId = sessionUser.userId || crypto.randomUUID();
     const createdAt = nowIso();
     const placeholderSalt = randomBase64Url(16);
-    const placeholderHash = await hashPassword(randomBase64Url(32), placeholderSalt);
+    const placeholderHash = await hashPassword(
+      randomBase64Url(32),
+      placeholderSalt,
+      SESSION_PLACEHOLDER_HASH_ITERATIONS,
+    );
 
     try {
       await db.insert(usersTable).values({
@@ -1016,7 +1068,9 @@ function validateTokenOptions(options: {
     typeof requestedTtlDays === "number"
       ? Math.max(1, Math.min(MAX_TOKEN_TTL_DAYS, Math.floor(requestedTtlDays)))
       : DEFAULT_TOKEN_TTL_DAYS;
-  const expiresAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + ttlDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
 
   return {
     ok: true,
@@ -1049,8 +1103,14 @@ function normalizeJiraBaseUrl(value: string | undefined): string | null {
 }
 
 async function deriveWorkspaceCryptoKey(secret: string): Promise<CryptoKey> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
-  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(secret),
+  );
+  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, [
+    "encrypt",
+    "decrypt",
+  ]);
 }
 
 async function encryptSecret(
@@ -1126,7 +1186,11 @@ function randomBase64Url(byteLength: number): string {
   return bytesToBase64Url(bytes);
 }
 
-async function hashPassword(password: string, saltBase64Url: string): Promise<string> {
+async function hashPassword(
+  password: string,
+  saltBase64Url: string,
+  iterations = PASSWORD_HASH_ITERATIONS,
+): Promise<string> {
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(password),
@@ -1139,7 +1203,7 @@ async function hashPassword(password: string, saltBase64Url: string): Promise<st
     {
       name: "PBKDF2",
       salt: toArrayBuffer(base64UrlToBytes(saltBase64Url)),
-      iterations: PASSWORD_HASH_ITERATIONS,
+      iterations,
       hash: "SHA-256",
     },
     keyMaterial,
@@ -1150,7 +1214,10 @@ async function hashPassword(password: string, saltBase64Url: string): Promise<st
 }
 
 async function hashToken(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(token),
+  );
   return bytesToBase64Url(new Uint8Array(digest));
 }
 
@@ -1189,5 +1256,8 @@ function base64UrlToBytes(value: string): Uint8Array {
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
 }
