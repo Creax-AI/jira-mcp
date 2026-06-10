@@ -1,10 +1,13 @@
 import {
   JiraADFBlockNode,
+  JiraADFBlockquoteNode,
   JiraADFBulletListNode,
   JiraADFDocument,
+  JiraADFHeadingNode,
   JiraADFInlineNode,
   JiraADFListItemNode,
   JiraADFMark,
+  JiraADFMentionNode,
   JiraADFOrderedListNode,
   JiraADFParagraphNode,
   JiraADFTableNode,
@@ -13,12 +16,16 @@ import {
   JiraBoardConfiguration,
   JiraBoardsResponse,
   JiraComment,
+  JiraCommentContainer,
   JiraCreateIssueResponse,
   JiraError,
   JiraIssue,
   JiraIssueLinkRequest,
   JiraIssueLinkTypesResponse,
   JiraIssueTypeResponse,
+  JiraMention,
+  JiraMentionedComment,
+  JiraMyselfResponse,
   JiraProject,
   JiraRemoteLinkRequest,
   JiraRemoteLinkResponse,
@@ -30,7 +37,10 @@ import {
   JiraUserSearchResponse,
 } from "~/types/jira";
 
-export type JiraLogSink = (name: string, value: unknown) => Promise<void> | void;
+export type JiraLogSink = (
+  name: string,
+  value: unknown,
+) => Promise<void> | void;
 
 export class JiraService {
   private readonly baseUrl: string;
@@ -40,7 +50,12 @@ export class JiraService {
   };
   private readonly logSink?: JiraLogSink;
 
-  constructor(baseUrl: string, username: string, apiToken: string, logSink?: JiraLogSink) {
+  constructor(
+    baseUrl: string,
+    username: string,
+    apiToken: string,
+    logSink?: JiraLogSink,
+  ) {
     // Ensure the base URL doesn't end with a trailing slash
     this.baseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
     this.auth = {
@@ -65,7 +80,9 @@ export class JiraService {
           Accept: "application/json",
           Authorization: `Basic ${toBase64(`${this.auth.username}:${this.auth.password}`)}`,
         },
-        ...(method === "POST" || method === "PUT" ? { body: JSON.stringify(data) } : {}),
+        ...(method === "POST" || method === "PUT"
+          ? { body: JSON.stringify(data) }
+          : {}),
       });
 
       if (!response.ok) {
@@ -188,7 +205,10 @@ export class JiraService {
     return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
   }
 
-  private buildTableNode(headerLine: string, bodyLines: string[]): JiraADFTableNode {
+  private buildTableNode(
+    headerLine: string,
+    bodyLines: string[],
+  ): JiraADFTableNode {
     const toParagraph = (value: string): JiraADFParagraphNode => {
       const inline = this.parseMarkdownInline(value);
       return {
@@ -281,7 +301,10 @@ export class JiraService {
       indent: number;
       node: JiraADFBulletListNode | JiraADFOrderedListNode;
     } => {
-      while (listStack.length > 0 && listStack[listStack.length - 1].indent > indent) {
+      while (
+        listStack.length > 0 &&
+        listStack[listStack.length - 1].indent > indent
+      ) {
         listStack.pop();
       }
 
@@ -476,7 +499,11 @@ export class JiraService {
       if (orderedMatch) {
         flushParagraph();
         const indent = this.getLineIndent(orderedMatch[1]);
-        const entry = ensureListContext("ordered", indent, Number(orderedMatch[2]));
+        const entry = ensureListContext(
+          "ordered",
+          indent,
+          Number(orderedMatch[2]),
+        );
         entry.node.content.push({
           type: "listItem",
           content: [this.buildParagraph(orderedMatch[3])],
@@ -526,19 +553,232 @@ export class JiraService {
   }
 
   /**
-   * Add a new comment to an issue
+   * Add a new comment to an issue, optionally with @-mentions
    */
-  async addComment(issueKey: string, comment: string): Promise<JiraComment> {
+  async addComment(
+    issueKey: string,
+    comment: string,
+    mentions?: JiraMention[],
+  ): Promise<JiraComment> {
     const content = comment.trim();
     if (!content) {
       throw new Error("Comment text cannot be empty");
     }
+
+    let body = this.createTextADF(content);
+    if (mentions && mentions.length > 0) {
+      body = this.injectMentions(body, mentions);
+    }
+
     const endpoint = `/rest/api/3/issue/${issueKey}/comment`;
     const response = await this.request<JiraComment>(endpoint, "POST", {
-      body: this.createTextADF(content),
+      body,
     });
-    await this.writeLog(`jira-comment-${issueKey}-${response.id}.json`, response);
+    await this.writeLog(
+      `jira-comment-${issueKey}-${response.id}.json`,
+      response,
+    );
     return response;
+  }
+
+  /**
+   * Get current user's Atlassian account ID
+   */
+  async getMyAccountId(): Promise<string> {
+    const endpoint = `/rest/api/3/myself`;
+    const response = await this.request<JiraMyselfResponse>(endpoint);
+    return response.accountId;
+  }
+
+  /**
+   * Get all comments for an issue
+   */
+  async getComments(issueKey: string): Promise<JiraComment[]> {
+    const endpoint = `/rest/api/3/issue/${issueKey}/comment`;
+    const response = await this.request<JiraCommentContainer>(endpoint);
+    return response.comments;
+  }
+
+  /**
+   * Walk comments and find those that mention a specific user account ID
+   * Returns comments where the user is @-mentioned in the ADF body
+   */
+  async findMentionsInComments(
+    comments: JiraComment[],
+    accountId: string,
+  ): Promise<JiraMentionedComment[]> {
+    const results: JiraMentionedComment[] = [];
+
+    for (const comment of comments) {
+      const mentionedBy = this.findMentionInADF(comment.body, accountId);
+      if (mentionedBy) {
+        results.push({
+          comment,
+          issueKey: "",
+          issueSummary: "",
+          mentionedBy,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Recursively walk ADF nodes to find a mention node with the given account ID
+   */
+  private findMentionInADF(
+    doc: JiraADFDocument,
+    accountId: string,
+  ): { accountId: string; displayName: string } | null {
+    const walkInline = (
+      nodes: JiraADFInlineNode[],
+    ): { accountId: string; displayName: string } | null => {
+      for (const node of nodes) {
+        if (node.type === "mention" && node.attrs.id === accountId) {
+          return {
+            accountId: node.attrs.id,
+            displayName: node.attrs.text.replace(/^@/, ""),
+          };
+        }
+      }
+      return null;
+    };
+
+    const walkBlocks = (
+      blocks: JiraADFBlockNode[],
+    ): { accountId: string; displayName: string } | null => {
+      for (const block of blocks) {
+        if (block.type === "paragraph") {
+          const found = walkInline((block as JiraADFParagraphNode).content);
+          if (found) return found;
+        } else if (block.type === "heading") {
+          const found = walkInline((block as JiraADFHeadingNode).content);
+          if (found) return found;
+        } else if (block.type === "blockquote") {
+          const found = walkBlocks((block as JiraADFBlockquoteNode).content);
+          if (found) return found;
+        } else if (
+          block.type === "bulletList" ||
+          block.type === "orderedList"
+        ) {
+          const list = block as JiraADFBulletListNode | JiraADFOrderedListNode;
+          for (const item of list.content) {
+            const found = walkBlocks(item.content as JiraADFBlockNode[]);
+            if (found) return found;
+          }
+        }
+      }
+      return null;
+    };
+
+    return walkBlocks(doc.content);
+  }
+
+  /**
+   * Walk ADF blocks and replace @displayName text nodes with mention nodes
+   */
+  private injectMentions(
+    doc: JiraADFDocument,
+    mentions: JiraMention[],
+  ): JiraADFDocument {
+    const mentionMap = new Map<string, string>();
+    for (const m of mentions) {
+      mentionMap.set(m.displayName, m.accountId);
+    }
+
+    const walkInline = (nodes: JiraADFInlineNode[]): JiraADFInlineNode[] => {
+      const result: JiraADFInlineNode[] = [];
+      for (const node of nodes) {
+        if (node.type === "text") {
+          result.push(...this.splitTextByMentions(node.text, mentionMap));
+        } else {
+          result.push(node);
+        }
+      }
+      return result;
+    };
+
+    const walkBlocks = (blocks: JiraADFBlockNode[]): void => {
+      for (const block of blocks) {
+        if (block.type === "paragraph") {
+          (block as JiraADFParagraphNode).content = walkInline(
+            (block as JiraADFParagraphNode).content,
+          );
+        } else if (block.type === "heading") {
+          (block as JiraADFHeadingNode).content = walkInline(
+            (block as JiraADFHeadingNode).content,
+          );
+        } else if (block.type === "blockquote") {
+          walkBlocks((block as JiraADFBlockquoteNode).content);
+        } else if (
+          block.type === "bulletList" ||
+          block.type === "orderedList"
+        ) {
+          const list = block as JiraADFBulletListNode | JiraADFOrderedListNode;
+          for (const item of list.content) {
+            walkBlocks(item.content as JiraADFBlockNode[]);
+          }
+        }
+        // Other block types (codeBlock, table) don't contain user text
+      }
+    };
+
+    walkBlocks(doc.content);
+    return doc;
+  }
+
+  /**
+   * Split text around @displayName mentions, returning inline nodes
+   */
+  private splitTextByMentions(
+    text: string,
+    mentionMap: Map<string, string>,
+  ): JiraADFInlineNode[] {
+    const nodes: JiraADFInlineNode[] = [];
+    let remaining = text;
+
+    while (remaining.length > 0) {
+      const atIndex = remaining.indexOf("@");
+      if (atIndex === -1) {
+        nodes.push({ type: "text", text: remaining });
+        break;
+      }
+
+      if (atIndex > 0) {
+        nodes.push({ type: "text", text: remaining.slice(0, atIndex) });
+      }
+
+      remaining = remaining.slice(atIndex + 1);
+
+      let matched = false;
+      for (const [displayName, accountId] of mentionMap) {
+        if (remaining.startsWith(displayName)) {
+          const afterMention = remaining.slice(displayName.length);
+          if (
+            afterMention.length === 0 ||
+            /[\s.,!?;:)\]}-]/.test(afterMention[0])
+          ) {
+            nodes.push({
+              type: "mention",
+              attrs: {
+                id: accountId,
+                text: `@${displayName}`,
+              },
+            });
+            remaining = afterMention;
+            matched = true;
+            break;
+          }
+        }
+      }
+
+      if (!matched) {
+        nodes.push({ type: "text", text: "@" });
+      }
+    }
+
+    return nodes;
   }
 
   /**
@@ -546,8 +786,15 @@ export class JiraService {
    */
   async searchIssues(params: JiraSearchParams): Promise<JiraSearchResponse> {
     const endpoint = `/rest/api/3/search/jql`;
-    const response = await this.request<JiraSearchResponse>(endpoint, "POST", params);
-    await this.writeLog(`jira-search-${new Date().toISOString()}.json`, response);
+    const response = await this.request<JiraSearchResponse>(
+      endpoint,
+      "POST",
+      params,
+    );
+    await this.writeLog(
+      `jira-search-${new Date().toISOString()}.json`,
+      response,
+    );
     return response;
   }
 
@@ -572,7 +819,15 @@ export class JiraService {
     return this.searchIssues({
       jql,
       maxResults,
-      fields: ["summary", "description", "status", "issuetype", "priority", "assignee", "project"],
+      fields: [
+        "summary",
+        "description",
+        "status",
+        "issuetype",
+        "priority",
+        "assignee",
+        "project",
+      ],
     });
   }
 
@@ -591,14 +846,25 @@ export class JiraService {
     return this.searchIssues({
       jql,
       maxResults,
-      fields: ["summary", "description", "status", "issuetype", "priority", "assignee", "project"],
+      fields: [
+        "summary",
+        "description",
+        "status",
+        "issuetype",
+        "priority",
+        "assignee",
+        "project",
+      ],
     });
   }
 
   /**
    * Get epics from a project
    */
-  async getEpics(projectKey?: string, maxResults: number = 50): Promise<JiraSearchResponse> {
+  async getEpics(
+    projectKey?: string,
+    maxResults: number = 50,
+  ): Promise<JiraSearchResponse> {
     const jql = projectKey
       ? `project = ${projectKey} AND issuetype = Epic ORDER BY updated DESC`
       : `issuetype = Epic ORDER BY updated DESC`;
@@ -606,14 +872,25 @@ export class JiraService {
     return this.searchIssues({
       jql,
       maxResults,
-      fields: ["summary", "description", "status", "issuetype", "priority", "assignee", "project"],
+      fields: [
+        "summary",
+        "description",
+        "status",
+        "issuetype",
+        "priority",
+        "assignee",
+        "project",
+      ],
     });
   }
 
   /**
    * Get child issues of an epic
    */
-  async getEpicChildren(epicKey: string, maxResults: number = 50): Promise<JiraSearchResponse> {
+  async getEpicChildren(
+    epicKey: string,
+    maxResults: number = 50,
+  ): Promise<JiraSearchResponse> {
     const jql = `parent = ${epicKey} ORDER BY updated DESC`;
 
     return this.searchIssues({
@@ -635,7 +912,9 @@ export class JiraService {
   /**
    * Get possible transitions for an issue
    */
-  async getIssueTransitions(issueKey: string): Promise<JiraTransitionsResponse> {
+  async getIssueTransitions(
+    issueKey: string,
+  ): Promise<JiraTransitionsResponse> {
     const endpoint = `/rest/api/3/issue/${issueKey}/transitions`;
     return this.request<JiraTransitionsResponse>(endpoint);
   }
@@ -655,10 +934,16 @@ export class JiraService {
   /**
    * Delete an issue by key, optionally including its subtasks
    */
-  async deleteIssue(issueKey: string, deleteSubtasks: boolean = false): Promise<void> {
+  async deleteIssue(
+    issueKey: string,
+    deleteSubtasks: boolean = false,
+  ): Promise<void> {
     const endpoint = `/rest/api/3/issue/${issueKey}${deleteSubtasks ? "?deleteSubtasks=true" : ""}`;
     await this.request<void>(endpoint, "DELETE");
-    await this.writeLog(`jira-delete-${issueKey}.json`, { issueKey, deleteSubtasks });
+    await this.writeLog(`jira-delete-${issueKey}.json`, {
+      issueKey,
+      deleteSubtasks,
+    });
   }
 
   /**
@@ -719,7 +1004,11 @@ export class JiraService {
       payload.fields.labels = normalizedLabels;
     }
 
-    const response = await this.request<JiraCreateIssueResponse>(endpoint, "POST", payload);
+    const response = await this.request<JiraCreateIssueResponse>(
+      endpoint,
+      "POST",
+      payload,
+    );
     await this.writeLog(`jira-create-epic-${response.key}.json`, response);
     return response;
   }
@@ -760,7 +1049,11 @@ export class JiraService {
       payload.fields.labels = normalizedLabels;
     }
 
-    const response = await this.request<JiraCreateIssueResponse>(endpoint, "POST", payload);
+    const response = await this.request<JiraCreateIssueResponse>(
+      endpoint,
+      "POST",
+      payload,
+    );
     await this.writeLog(`jira-create-issue-${response.key}.json`, response);
     return response;
   }
@@ -813,7 +1106,9 @@ export class JiraService {
 
     const issue = await this.getIssue(issueKey);
     const currentLabels = issue.fields.labels ?? [];
-    const mergedLabels = Array.from(new Set([...currentLabels, ...normalizedLabels]));
+    const mergedLabels = Array.from(
+      new Set([...currentLabels, ...normalizedLabels]),
+    );
 
     await this.request<void>(`/rest/api/3/issue/${issueKey}`, "PUT", {
       fields: {
@@ -835,7 +1130,9 @@ export class JiraService {
     const issue = await this.getIssue(issueKey);
     const currentLabels = issue.fields.labels ?? [];
     const removalSet = new Set(normalizedLabels);
-    const remainingLabels = currentLabels.filter((label) => !removalSet.has(label));
+    const remainingLabels = currentLabels.filter(
+      (label) => !removalSet.has(label),
+    );
 
     await this.request<void>(`/rest/api/3/issue/${issueKey}`, "PUT", {
       fields: {
@@ -857,7 +1154,9 @@ export class JiraService {
       const users = await this.searchUsers(assignee);
       const user = users.find(
         (u) =>
-          u.accountId === assignee || u.emailAddress === assignee || u.displayName === assignee,
+          u.accountId === assignee ||
+          u.emailAddress === assignee ||
+          u.displayName === assignee,
       );
 
       if (user) {
@@ -950,7 +1249,10 @@ export class JiraService {
     const endpoint = `/rest/api/3/issue/${issueKey}/remotelink`;
     const payload: JiraRemoteLinkRequest = {
       globalId: `confluence-page-${remoteObject.url}`,
-      application: application ?? { type: "com.atlassian.confluence", linkSays: "Confluence" },
+      application: application ?? {
+        type: "com.atlassian.confluence",
+        linkSays: "Confluence",
+      },
       remoteObject: {
         url: remoteObject.url,
         title: remoteObject.title,
@@ -960,8 +1262,15 @@ export class JiraService {
         ...(remoteObject.type ? { type: remoteObject.type } : { type: "page" }),
       },
     };
-    const response = await this.request<JiraRemoteLinkResponse>(endpoint, "POST", payload);
-    await this.writeLog(`jira-remotelink-${issueKey}-${response.id}.json`, response);
+    const response = await this.request<JiraRemoteLinkResponse>(
+      endpoint,
+      "POST",
+      payload,
+    );
+    await this.writeLog(
+      `jira-remotelink-${issueKey}-${response.id}.json`,
+      response,
+    );
     return response;
   }
 
@@ -983,7 +1292,10 @@ export class JiraService {
     }
     const endpoint = `/rest/agile/1.0/board?${queryParams.toString()}`;
     const response = await this.request<JiraBoardsResponse>(endpoint);
-    await this.writeLog(`jira-boards-${new Date().toISOString()}.json`, response);
+    await this.writeLog(
+      `jira-boards-${new Date().toISOString()}.json`,
+      response,
+    );
     return response;
   }
 
@@ -1027,7 +1339,10 @@ export class JiraService {
 
     const endpoint = `/rest/agile/1.0/board/${boardId}/issue?${queryParams.toString()}`;
     const response = await this.request<JiraSearchResponse>(endpoint);
-    await this.writeLog(`jira-board-${boardId}-issues-${new Date().toISOString()}.json`, response);
+    await this.writeLog(
+      `jira-board-${boardId}-issues-${new Date().toISOString()}.json`,
+      response,
+    );
     return response;
   }
 
@@ -1091,7 +1406,10 @@ export class JiraService {
     const endpoint = `/rest/agile/1.0/backlog/issue`;
     const payload = { issues };
     await this.request<void>(endpoint, "POST", payload);
-    await this.writeLog(`jira-backlog-move-${new Date().toISOString()}.json`, payload);
+    await this.writeLog(
+      `jira-backlog-move-${new Date().toISOString()}.json`,
+      payload,
+    );
   }
 
   async updateSprint(
@@ -1188,7 +1506,10 @@ export class JiraService {
 
     const endpoint = `/rest/agile/1.0/board/${boardId}/backlog?${queryParams.toString()}`;
     const response = await this.request<JiraSearchResponse>(endpoint);
-    await this.writeLog(`jira-board-${boardId}-backlog-${new Date().toISOString()}.json`, response);
+    await this.writeLog(
+      `jira-board-${boardId}-backlog-${new Date().toISOString()}.json`,
+      response,
+    );
     return response;
   }
 
@@ -1217,7 +1538,9 @@ export class JiraService {
     });
   }
 
-  async getBoardConfiguration(boardId: number): Promise<JiraBoardConfiguration> {
+  async getBoardConfiguration(
+    boardId: number,
+  ): Promise<JiraBoardConfiguration> {
     const endpoint = `/rest/agile/1.0/board/${boardId}/configuration`;
     const response = await this.request<JiraBoardConfiguration>(endpoint);
     await this.writeLog(`jira-board-${boardId}-config.json`, response);
@@ -1231,7 +1554,10 @@ type JiraErrorBody = {
   message?: unknown;
 };
 
-function formatJiraErrorMessage(errorBody: unknown, statusText: string): string {
+function formatJiraErrorMessage(
+  errorBody: unknown,
+  statusText: string,
+): string {
   const parsed = isJiraErrorBody(errorBody) ? errorBody : undefined;
 
   const topLevelMessages = Array.isArray(parsed?.errorMessages)
@@ -1269,7 +1595,9 @@ function normalizeLabels(labels?: string[]): string[] {
   }
 
   return Array.from(
-    new Set(labels.map((label) => label.trim()).filter((label) => label.length > 0)),
+    new Set(
+      labels.map((label) => label.trim()).filter((label) => label.length > 0),
+    ),
   );
 }
 
@@ -1278,7 +1606,9 @@ function isStringRecord(value: unknown): value is Record<string, string> {
     return false;
   }
 
-  return Object.values(value).every((recordValue) => typeof recordValue === "string");
+  return Object.values(value).every(
+    (recordValue) => typeof recordValue === "string",
+  );
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -1299,5 +1629,7 @@ function isJiraError(value: unknown): value is JiraError {
   }
 
   const maybeError = value as { status?: unknown; err?: unknown };
-  return typeof maybeError.status === "number" && typeof maybeError.err === "string";
+  return (
+    typeof maybeError.status === "number" && typeof maybeError.err === "string"
+  );
 }
