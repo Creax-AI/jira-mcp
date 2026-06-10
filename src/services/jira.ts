@@ -16,6 +16,7 @@ import {
   JiraBoardConfiguration,
   JiraBoardsResponse,
   JiraComment,
+  JiraCommentContainer,
   JiraCreateIssueResponse,
   JiraError,
   JiraIssue,
@@ -23,6 +24,8 @@ import {
   JiraIssueLinkTypesResponse,
   JiraIssueTypeResponse,
   JiraMention,
+  JiraMentionedComment,
+  JiraMyselfResponse,
   JiraProject,
   JiraRemoteLinkRequest,
   JiraRemoteLinkResponse,
@@ -576,6 +579,100 @@ export class JiraService {
       response,
     );
     return response;
+  }
+
+  /**
+   * Get current user's Atlassian account ID
+   */
+  async getMyAccountId(): Promise<string> {
+    const endpoint = `/rest/api/3/myself`;
+    const response = await this.request<JiraMyselfResponse>(endpoint);
+    return response.accountId;
+  }
+
+  /**
+   * Get all comments for an issue
+   */
+  async getComments(issueKey: string): Promise<JiraComment[]> {
+    const endpoint = `/rest/api/3/issue/${issueKey}/comment`;
+    const response = await this.request<JiraCommentContainer>(endpoint);
+    return response.comments;
+  }
+
+  /**
+   * Walk comments and find those that mention a specific user account ID
+   * Returns comments where the user is @-mentioned in the ADF body
+   */
+  async findMentionsInComments(
+    comments: JiraComment[],
+    accountId: string,
+  ): Promise<JiraMentionedComment[]> {
+    const results: JiraMentionedComment[] = [];
+
+    for (const comment of comments) {
+      const mentionedBy = this.findMentionInADF(comment.body, accountId);
+      if (mentionedBy) {
+        results.push({
+          comment,
+          issueKey: "",
+          issueSummary: "",
+          mentionedBy,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Recursively walk ADF nodes to find a mention node with the given account ID
+   */
+  private findMentionInADF(
+    doc: JiraADFDocument,
+    accountId: string,
+  ): { accountId: string; displayName: string } | null {
+    const walkInline = (
+      nodes: JiraADFInlineNode[],
+    ): { accountId: string; displayName: string } | null => {
+      for (const node of nodes) {
+        if (node.type === "mention" && node.attrs.id === accountId) {
+          return {
+            accountId: node.attrs.id,
+            displayName: node.attrs.text.replace(/^@/, ""),
+          };
+        }
+      }
+      return null;
+    };
+
+    const walkBlocks = (
+      blocks: JiraADFBlockNode[],
+    ): { accountId: string; displayName: string } | null => {
+      for (const block of blocks) {
+        if (block.type === "paragraph") {
+          const found = walkInline((block as JiraADFParagraphNode).content);
+          if (found) return found;
+        } else if (block.type === "heading") {
+          const found = walkInline((block as JiraADFHeadingNode).content);
+          if (found) return found;
+        } else if (block.type === "blockquote") {
+          const found = walkBlocks((block as JiraADFBlockquoteNode).content);
+          if (found) return found;
+        } else if (
+          block.type === "bulletList" ||
+          block.type === "orderedList"
+        ) {
+          const list = block as JiraADFBulletListNode | JiraADFOrderedListNode;
+          for (const item of list.content) {
+            const found = walkBlocks(item.content as JiraADFBlockNode[]);
+            if (found) return found;
+          }
+        }
+      }
+      return null;
+    };
+
+    return walkBlocks(doc.content);
   }
 
   /**

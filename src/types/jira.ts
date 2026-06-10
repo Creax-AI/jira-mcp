@@ -14,6 +14,15 @@ export interface JiraUser {
 
 export interface JiraUserSearchResponse extends Array<JiraUser> {}
 
+export interface JiraMyselfResponse {
+  accountId: string;
+  displayName: string;
+  emailAddress: string;
+  active: boolean;
+  timeZone: string;
+  accountType: string;
+}
+
 export interface JiraMention {
   accountId: string;
   displayName: string;
@@ -64,6 +73,7 @@ export interface JiraIssue {
       name: string;
     }>;
     duedate?: string;
+    comment?: JiraCommentContainer;
   };
 }
 
@@ -274,6 +284,24 @@ export interface JiraComment {
     displayName: string;
   };
   updateAuthor?: {
+    accountId: string;
+    displayName: string;
+  };
+}
+
+export interface JiraCommentContainer {
+  comments: JiraComment[];
+  maxResults: number;
+  total: number;
+  startAt: number;
+  self: string;
+}
+
+export interface JiraMentionedComment {
+  comment: JiraComment;
+  issueKey: string;
+  issueSummary: string;
+  mentionedBy: {
     accountId: string;
     displayName: string;
   };

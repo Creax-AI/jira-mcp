@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { JiraLogSink, JiraService } from "./services/jira";
+import type { JiraADFDocument } from "./types/jira";
 import { ConfluenceLogSink, ConfluenceService } from "./services/confluence";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
@@ -192,6 +193,153 @@ export class JiraMcpServer {
               {
                 type: "text",
                 text: `Error adding comment: ${formatToolError(error)}`,
+              },
+            ],
+          };
+        }
+      },
+    );
+
+    // Tool to get comments for an issue
+    this.server.tool(
+      "get_issue_comments",
+      "Get all comments on a Jira issue",
+      {
+        issueKey: z
+          .string()
+          .describe(
+            "The Jira issue key to fetch comments for (e.g., PROJ-123)",
+          ),
+      },
+      async ({ issueKey }) => {
+        try {
+          console.log(`Fetching comments for issue ${issueKey}`);
+          const comments = await this.jiraService.getComments(issueKey);
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(comments, null, 2) },
+            ],
+          };
+        } catch (error) {
+          console.error(`Error fetching comments for ${issueKey}:`, error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error fetching issue comments: ${formatToolError(error)}`,
+              },
+            ],
+          };
+        }
+      },
+    );
+
+    // Tool to find mentions of the authenticated user
+    this.server.tool(
+      "get_mentions",
+      "Find Jira comments where the authenticated user is @-mentioned. Returns comments with issue context.",
+      {
+        issueKey: z
+          .string()
+          .optional()
+          .describe(
+            "Optional issue key to scope the search. If omitted, searches all projects the user has access to.",
+          ),
+      },
+      async ({ issueKey }) => {
+        try {
+          const myAccountId = await this.jiraService.getMyAccountId();
+
+          if (issueKey) {
+            // Search just one issue
+            console.log(
+              `Finding mentions in issue ${issueKey} for user ${myAccountId}`,
+            );
+            const comments = await this.jiraService.getComments(issueKey);
+            const mentions = await this.jiraService.findMentionsInComments(
+              comments,
+              myAccountId,
+            );
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(
+                    { accountId: myAccountId, mentions },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+            };
+          }
+
+          // Search across all recently updated issues
+          console.log(
+            `Finding mentions across all issues for user ${myAccountId}`,
+          );
+          const searchResponse = await this.jiraService.searchIssues({
+            jql: "order by updated DESC",
+            maxResults: 50,
+            fields: ["summary", "comment"],
+          });
+
+          const allMentions: Array<{
+            issueKey: string;
+            issueSummary: string;
+            comments: Array<{
+              id: string;
+              author: { accountId: string; displayName: string };
+              created: string;
+              body: JiraADFDocument;
+            }>;
+          }> = [];
+
+          for (const issue of searchResponse.issues) {
+            const issueComments = issue.fields.comment?.comments;
+            if (!issueComments || issueComments.length === 0) continue;
+
+            const mentionedComments =
+              await this.jiraService.findMentionsInComments(
+                issueComments,
+                myAccountId,
+              );
+            if (mentionedComments.length > 0) {
+              allMentions.push({
+                issueKey: issue.key,
+                issueSummary: issue.fields.summary,
+                comments: mentionedComments.map((m) => ({
+                  id: m.comment.id,
+                  author: {
+                    accountId: m.comment.author.accountId,
+                    displayName: m.comment.author.displayName,
+                  },
+                  created: m.comment.created,
+                  body: m.comment.body,
+                })),
+              });
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  { accountId: myAccountId, mentions: allMentions },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        } catch (error) {
+          console.error("Error finding mentions:", error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error finding mentions: ${formatToolError(error)}`,
               },
             ],
           };
