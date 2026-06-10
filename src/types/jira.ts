@@ -14,6 +14,11 @@ export interface JiraUser {
 
 export interface JiraUserSearchResponse extends Array<JiraUser> {}
 
+export interface JiraMention {
+  accountId: string;
+  displayName: string;
+}
+
 export interface JiraIssue {
   id: string;
   key: string;
@@ -160,7 +165,18 @@ export interface JiraADFHardBreakNode {
   type: "hardBreak";
 }
 
-export type JiraADFInlineNode = JiraADFTextNode | JiraADFHardBreakNode;
+export interface JiraADFMentionNode {
+  type: "mention";
+  attrs: {
+    id: string;
+    text: string;
+  };
+}
+
+export type JiraADFInlineNode =
+  | JiraADFTextNode
+  | JiraADFHardBreakNode
+  | JiraADFMentionNode;
 
 export interface JiraADFParagraphNode {
   type: "paragraph";
@@ -177,7 +193,9 @@ export interface JiraADFHeadingNode {
 
 export interface JiraADFListItemNode {
   type: "listItem";
-  content: Array<JiraADFParagraphNode | JiraADFBulletListNode | JiraADFOrderedListNode>;
+  content: Array<
+    JiraADFParagraphNode | JiraADFBulletListNode | JiraADFOrderedListNode
+  >;
 }
 
 export interface JiraADFBulletListNode {

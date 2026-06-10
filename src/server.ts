@@ -16,10 +16,21 @@ export class JiraMcpServer {
     jiraUrl: string,
     username: string,
     apiToken: string,
-    options?: { logSink?: JiraLogSink; defaultProjectKey?: string; allowedTools?: string[] },
+    options?: {
+      logSink?: JiraLogSink;
+      defaultProjectKey?: string;
+      allowedTools?: string[];
+    },
   ) {
-    this.atlassianBaseUrl = jiraUrl.endsWith("/") ? jiraUrl.slice(0, -1) : jiraUrl;
-    this.jiraService = new JiraService(this.atlassianBaseUrl, username, apiToken, options?.logSink);
+    this.atlassianBaseUrl = jiraUrl.endsWith("/")
+      ? jiraUrl.slice(0, -1)
+      : jiraUrl;
+    this.jiraService = new JiraService(
+      this.atlassianBaseUrl,
+      username,
+      apiToken,
+      options?.logSink,
+    );
     this.confluenceService = new ConfluenceService(
       this.atlassianBaseUrl,
       username,
@@ -47,7 +58,11 @@ export class JiraMcpServer {
   private registerTools(): void {
     const toolAnnotations: Record<
       string,
-      { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean }
+      {
+        readOnlyHint?: boolean;
+        destructiveHint?: boolean;
+        idempotentHint?: boolean;
+      }
     > = {
       get_: { readOnlyHint: true },
       search_: { readOnlyHint: true },
@@ -59,7 +74,9 @@ export class JiraMcpServer {
       complete_: { destructiveHint: true },
     };
 
-    function resolveAnnotations(name: string): Record<string, boolean> | undefined {
+    function resolveAnnotations(
+      name: string,
+    ): Record<string, boolean> | undefined {
       for (const [prefix, annotations] of Object.entries(toolAnnotations)) {
         if (name.startsWith(prefix)) return annotations;
       }
@@ -92,13 +109,17 @@ export class JiraMcpServer {
       "get_issue",
       "Get detailed information about a Jira issue",
       {
-        issueKey: z.string().describe("The key of the Jira issue to fetch (e.g., PROJECT-123)"),
+        issueKey: z
+          .string()
+          .describe("The key of the Jira issue to fetch (e.g., PROJECT-123)"),
       },
       async ({ issueKey }) => {
         try {
           console.log(`Fetching issue: ${issueKey}`);
           const issue = await this.jiraService.getIssue(issueKey);
-          console.log(`Successfully fetched issue: ${issue.key} - ${issue.fields.summary}`);
+          console.log(
+            `Successfully fetched issue: ${issue.key} - ${issue.fields.summary}`,
+          );
           return {
             content: [{ type: "text", text: JSON.stringify(issue, null, 2) }],
           };
@@ -119,18 +140,50 @@ export class JiraMcpServer {
     // Tool to add a comment to an issue
     this.server.tool(
       "add_comment",
-      "Add a comment to an existing Jira issue",
+      "Add a comment to an existing Jira issue. Use mentions to @-mention users in the comment body.",
       {
-        issueKey: z.string().describe("The Jira issue key to comment on (e.g., PROJ-123)"),
-        comment: z.string().min(1).describe("The text of the comment to add to the issue"),
+        issueKey: z
+          .string()
+          .describe("The Jira issue key to comment on (e.g., PROJ-123)"),
+        comment: z
+          .string()
+          .min(1)
+          .describe(
+            "The text of the comment. Include @displayName in the text for each user you want to mention.",
+          ),
+        mentions: z
+          .array(
+            z.object({
+              accountId: z
+                .string()
+                .describe("The Atlassian account ID of the user"),
+              displayName: z
+                .string()
+                .describe("The display name of the user (without @ prefix)"),
+            }),
+          )
+          .optional()
+          .describe(
+            "Users to @-mention in the comment. The displayName in each entry must appear as @displayName in the comment text. Use search_users to find account IDs.",
+          ),
       },
-      async ({ issueKey, comment }) => {
+      async ({ issueKey, comment, mentions }) => {
         try {
-          console.log(`Adding comment to issue ${issueKey}`);
-          const response = await this.jiraService.addComment(issueKey, comment);
-          console.log(`Successfully added comment ${response.id} to ${issueKey}`);
+          console.log(
+            `Adding comment to issue ${issueKey}${mentions ? ` with ${mentions.length} mention(s)` : ""}`,
+          );
+          const response = await this.jiraService.addComment(
+            issueKey,
+            comment,
+            mentions,
+          );
+          console.log(
+            `Successfully added comment ${response.id} to ${issueKey}`,
+          );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error adding comment to ${issueKey}:`, error);
@@ -150,12 +203,19 @@ export class JiraMcpServer {
       "add_issue_labels",
       "Add one or more labels to an existing Jira issue",
       {
-        issueKey: z.string().describe("The Jira issue key to update (e.g., PROJ-123)"),
-        labels: z.array(z.string().min(1)).min(1).describe("Labels to add to the issue"),
+        issueKey: z
+          .string()
+          .describe("The Jira issue key to update (e.g., PROJ-123)"),
+        labels: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe("Labels to add to the issue"),
       },
       async ({ issueKey, labels }) => {
         try {
-          console.log(`Adding labels to issue ${issueKey}: ${labels.join(", ")}`);
+          console.log(
+            `Adding labels to issue ${issueKey}: ${labels.join(", ")}`,
+          );
           await this.jiraService.addIssueLabels(issueKey, labels);
           return {
             content: [
@@ -183,12 +243,19 @@ export class JiraMcpServer {
       "remove_issue_labels",
       "Remove one or more labels from an existing Jira issue",
       {
-        issueKey: z.string().describe("The Jira issue key to update (e.g., PROJ-123)"),
-        labels: z.array(z.string().min(1)).min(1).describe("Labels to remove from the issue"),
+        issueKey: z
+          .string()
+          .describe("The Jira issue key to update (e.g., PROJ-123)"),
+        labels: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe("Labels to remove from the issue"),
       },
       async ({ issueKey, labels }) => {
         try {
-          console.log(`Removing labels from issue ${issueKey}: ${labels.join(", ")}`);
+          console.log(
+            `Removing labels from issue ${issueKey}: ${labels.join(", ")}`,
+          );
           await this.jiraService.removeIssueLabels(issueKey, labels);
           return {
             content: [
@@ -217,10 +284,14 @@ export class JiraMcpServer {
       "transition_issue",
       "Move an issue to a different status by applying a workflow transition",
       {
-        issueKey: z.string().describe("The Jira issue key to transition (e.g., PROJ-123)"),
+        issueKey: z
+          .string()
+          .describe("The Jira issue key to transition (e.g., PROJ-123)"),
         transitionId: z
           .string()
-          .describe("The transition ID to apply (use get_issue_transitions to discover IDs)"),
+          .describe(
+            "The transition ID to apply (use get_issue_transitions to discover IDs)",
+          ),
       },
       async ({ issueKey, transitionId }) => {
         try {
@@ -252,7 +323,9 @@ export class JiraMcpServer {
       "delete_issue",
       "Delete a Jira issue permanently. Optionally deletes its subtasks as well.",
       {
-        issueKey: z.string().describe("The Jira issue key to delete (e.g., PROJ-123)"),
+        issueKey: z
+          .string()
+          .describe("The Jira issue key to delete (e.g., PROJ-123)"),
         deleteSubtasks: z
           .boolean()
           .optional()
@@ -260,7 +333,9 @@ export class JiraMcpServer {
       },
       async ({ issueKey, deleteSubtasks }) => {
         try {
-          console.log(`Deleting issue ${issueKey}${deleteSubtasks ? " with subtasks" : ""}`);
+          console.log(
+            `Deleting issue ${issueKey}${deleteSubtasks ? " with subtasks" : ""}`,
+          );
           await this.jiraService.deleteIssue(issueKey, deleteSubtasks);
           return {
             content: [
@@ -288,15 +363,21 @@ export class JiraMcpServer {
       "get_issue_transitions",
       "List available workflow transitions for an issue",
       {
-        issueKey: z.string().describe("The Jira issue key to inspect (e.g., PROJ-123)"),
+        issueKey: z
+          .string()
+          .describe("The Jira issue key to inspect (e.g., PROJ-123)"),
       },
       async ({ issueKey }) => {
         try {
           console.log(`Fetching transitions for issue ${issueKey}`);
           const response = await this.jiraService.getIssueTransitions(issueKey);
-          console.log(`Fetched ${response.transitions.length} transitions for ${issueKey}`);
+          console.log(
+            `Fetched ${response.transitions.length} transitions for ${issueKey}`,
+          );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error fetching transitions for ${issueKey}:`, error);
@@ -322,11 +403,16 @@ export class JiraMcpServer {
           .describe(
             "JQL query string (e.g., \"project = ALFA AND status = 'In Progress' ORDER BY created DESC\")",
           ),
-        maxResults: z.number().optional().describe("Maximum number of results to return"),
+        maxResults: z
+          .number()
+          .optional()
+          .describe("Maximum number of results to return"),
         fields: z
           .array(z.string())
           .optional()
-          .describe("Fields to return (e.g., ['summary', 'status', 'assignee'])"),
+          .describe(
+            "Fields to return (e.g., ['summary', 'status', 'assignee'])",
+          ),
         nextPageToken: z
           .string()
           .optional()
@@ -343,7 +429,9 @@ export class JiraMcpServer {
           });
           console.log(`Found ${response.issues.length} issues`);
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error("Error searching issues:", error);
@@ -368,18 +456,25 @@ export class JiraMcpServer {
           .string()
           .optional()
           .describe("The key of the Jira project to fetch epics from"),
-        maxResults: z.number().optional().describe("Maximum number of results to return"),
+        maxResults: z
+          .number()
+          .optional()
+          .describe("Maximum number of results to return"),
       },
       async ({ projectKey, maxResults }) => {
         try {
-          console.log(`Fetching epics${projectKey ? ` for project: ${projectKey}` : ""}`);
+          console.log(
+            `Fetching epics${projectKey ? ` for project: ${projectKey}` : ""}`,
+          );
           const response = await this.jiraService.getEpics(
             projectKey ?? this.defaultProjectKey,
             maxResults,
           );
           console.log(`Successfully fetched ${response.issues.length} epics`);
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error fetching epics:`, error);
@@ -401,15 +496,25 @@ export class JiraMcpServer {
       "Get child issues of a specific epic",
       {
         epicKey: z.string().describe("The Jira epic key (e.g., PROJ-123)"),
-        maxResults: z.number().optional().describe("Maximum number of results to return"),
+        maxResults: z
+          .number()
+          .optional()
+          .describe("Maximum number of results to return"),
       },
       async ({ epicKey, maxResults }) => {
         try {
           console.log(`Fetching children for epic ${epicKey}`);
-          const response = await this.jiraService.getEpicChildren(epicKey, maxResults);
-          console.log(`Successfully fetched ${response.issues.length} child issues for ${epicKey}`);
+          const response = await this.jiraService.getEpicChildren(
+            epicKey,
+            maxResults,
+          );
+          console.log(
+            `Successfully fetched ${response.issues.length} child issues for ${epicKey}`,
+          );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error fetching epic children for ${epicKey}:`, error);
@@ -434,18 +539,27 @@ export class JiraMcpServer {
           .string()
           .optional()
           .describe("The key of the Jira project to fetch issues from"),
-        maxResults: z.number().optional().describe("Maximum number of results to return"),
+        maxResults: z
+          .number()
+          .optional()
+          .describe("Maximum number of results to return"),
       },
       async ({ projectKey, maxResults }) => {
         try {
-          console.log(`Fetching assigned issues${projectKey ? ` for project: ${projectKey}` : ""}`);
+          console.log(
+            `Fetching assigned issues${projectKey ? ` for project: ${projectKey}` : ""}`,
+          );
           const response = await this.jiraService.getAssignedIssues(
             projectKey ?? this.defaultProjectKey,
             maxResults,
           );
-          console.log(`Successfully fetched ${response.issues.length} assigned issues`);
+          console.log(
+            `Successfully fetched ${response.issues.length} assigned issues`,
+          );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error fetching assigned issues:`, error);
@@ -470,7 +584,10 @@ export class JiraMcpServer {
           .string()
           .optional()
           .describe("The key of the Jira project to fetch issues from"),
-        maxResults: z.number().optional().describe("Maximum number of results to return"),
+        maxResults: z
+          .number()
+          .optional()
+          .describe("Maximum number of results to return"),
       },
       async ({ projectKey, maxResults }) => {
         try {
@@ -482,9 +599,13 @@ export class JiraMcpServer {
             maxResults,
             false,
           );
-          console.log(`Successfully fetched ${response.issues.length} pending assigned issues`);
+          console.log(
+            `Successfully fetched ${response.issues.length} pending assigned issues`,
+          );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error fetching pending assigned issues:`, error);
@@ -506,12 +627,17 @@ export class JiraMcpServer {
       "get_issues_by_type",
       "Get issues of a specific type",
       {
-        issueType: z.string().describe("The type of issue to fetch (e.g., Bug, Story, Epic)"),
+        issueType: z
+          .string()
+          .describe("The type of issue to fetch (e.g., Bug, Story, Epic)"),
         projectKey: z
           .string()
           .optional()
           .describe("The key of the Jira project to fetch issues from"),
-        maxResults: z.number().optional().describe("Maximum number of results to return"),
+        maxResults: z
+          .number()
+          .optional()
+          .describe("Maximum number of results to return"),
       },
       async ({ issueType, projectKey, maxResults }) => {
         try {
@@ -523,9 +649,13 @@ export class JiraMcpServer {
             projectKey ?? this.defaultProjectKey,
             maxResults,
           );
-          console.log(`Successfully fetched ${response.issues.length} issues of type ${issueType}`);
+          console.log(
+            `Successfully fetched ${response.issues.length} issues of type ${issueType}`,
+          );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error fetching issues by type:`, error);
@@ -542,58 +672,80 @@ export class JiraMcpServer {
     );
 
     // Tool to get projects
-    this.server.tool("get_projects", "Get list of available Jira projects", {}, async () => {
-      try {
-        console.log("Fetching projects");
-        const projects = await this.jiraService.getProjects();
-        console.log(`Successfully fetched ${projects.length} projects`);
-        return {
-          content: [{ type: "text", text: JSON.stringify(projects, null, 2) }],
-        };
-      } catch (error) {
-        console.error("Error fetching projects:", error);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error fetching projects: ${formatToolError(error)}`,
-            },
-          ],
-        };
-      }
-    });
+    this.server.tool(
+      "get_projects",
+      "Get list of available Jira projects",
+      {},
+      async () => {
+        try {
+          console.log("Fetching projects");
+          const projects = await this.jiraService.getProjects();
+          console.log(`Successfully fetched ${projects.length} projects`);
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(projects, null, 2) },
+            ],
+          };
+        } catch (error) {
+          console.error("Error fetching projects:", error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error fetching projects: ${formatToolError(error)}`,
+              },
+            ],
+          };
+        }
+      },
+    );
 
     // Tool to get issue types
-    this.server.tool("get_issue_types", "Get list of available Jira issue types", {}, async () => {
-      try {
-        console.log("Fetching issue types");
-        const issueTypes = await this.jiraService.getIssueTypes();
-        console.log(`Successfully fetched issue types`);
-        return {
-          content: [{ type: "text", text: JSON.stringify(issueTypes, null, 2) }],
-        };
-      } catch (error) {
-        console.error("Error fetching issue types:", error);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error fetching issue types: ${formatToolError(error)}`,
-            },
-          ],
-        };
-      }
-    });
+    this.server.tool(
+      "get_issue_types",
+      "Get list of available Jira issue types",
+      {},
+      async () => {
+        try {
+          console.log("Fetching issue types");
+          const issueTypes = await this.jiraService.getIssueTypes();
+          console.log(`Successfully fetched issue types`);
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(issueTypes, null, 2) },
+            ],
+          };
+        } catch (error) {
+          console.error("Error fetching issue types:", error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error fetching issue types: ${formatToolError(error)}`,
+              },
+            ],
+          };
+        }
+      },
+    );
 
     // Tool to create a new epic
     this.server.tool(
       "create_epic",
       "Create a new epic in a Jira project",
       {
-        projectKey: z.string().describe("The key of the Jira project (e.g., PROJ)"),
+        projectKey: z
+          .string()
+          .describe("The key of the Jira project (e.g., PROJ)"),
         summary: z.string().describe("The summary/title of the epic"),
-        description: z.string().optional().describe("Optional description for the epic"),
-        labels: z.array(z.string().min(1)).optional().describe("Optional labels to add on create"),
+        description: z
+          .string()
+          .optional()
+          .describe("Optional description for the epic"),
+        labels: z
+          .array(z.string().min(1))
+          .optional()
+          .describe("Optional labels to add on create"),
       },
       async ({ projectKey, summary, description, labels }) => {
         try {
@@ -606,7 +758,9 @@ export class JiraMcpServer {
           );
           console.log(`Successfully created epic: ${response.key}`);
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error creating epic:`, error);
@@ -627,14 +781,33 @@ export class JiraMcpServer {
       "create_issue_with_parent",
       "Create a new issue linked to a parent epic",
       {
-        projectKey: z.string().describe("The key of the Jira project (e.g., PROJ)"),
-        issueType: z.string().describe("The type of issue to create (e.g., Story, Task, Bug)"),
+        projectKey: z
+          .string()
+          .describe("The key of the Jira project (e.g., PROJ)"),
+        issueType: z
+          .string()
+          .describe("The type of issue to create (e.g., Story, Task, Bug)"),
         summary: z.string().describe("The summary/title of the issue"),
-        parentKey: z.string().describe("The key of the parent epic (e.g., PROJ-123)"),
-        description: z.string().optional().describe("Optional description for the issue"),
-        labels: z.array(z.string().min(1)).optional().describe("Optional labels to add on create"),
+        parentKey: z
+          .string()
+          .describe("The key of the parent epic (e.g., PROJ-123)"),
+        description: z
+          .string()
+          .optional()
+          .describe("Optional description for the issue"),
+        labels: z
+          .array(z.string().min(1))
+          .optional()
+          .describe("Optional labels to add on create"),
       },
-      async ({ projectKey, issueType, summary, parentKey, description, labels }) => {
+      async ({
+        projectKey,
+        issueType,
+        summary,
+        parentKey,
+        description,
+        labels,
+      }) => {
         try {
           console.log(
             `Creating ${issueType} in project ${projectKey} under parent ${parentKey}: ${summary}`,
@@ -649,7 +822,9 @@ export class JiraMcpServer {
           );
           console.log(`Successfully created issue: ${response.key}`);
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error creating issue with parent:`, error);
@@ -670,8 +845,12 @@ export class JiraMcpServer {
       "set_parent_issue",
       "Set the parent of an issue (for epic→issue or issue→subtask relationships)",
       {
-        issueKey: z.string().describe("The key of the child issue (e.g., PROJ-456)"),
-        parentKey: z.string().describe("The key of the parent issue (e.g., PROJ-123)"),
+        issueKey: z
+          .string()
+          .describe("The key of the child issue (e.g., PROJ-456)"),
+        parentKey: z
+          .string()
+          .describe("The key of the parent issue (e.g., PROJ-123)"),
       },
       async ({ issueKey, parentKey }) => {
         try {
@@ -705,14 +884,26 @@ export class JiraMcpServer {
       "update_issue_description",
       "Replace the description and optionally set labels on an existing Jira issue",
       {
-        issueKey: z.string().describe("The key of the issue to update (e.g., PROJ-123)"),
-        description: z.string().min(1).describe("The new markdown/plain text description to set"),
-        labels: z.array(z.string().min(1)).optional().describe("Optional labels to set"),
+        issueKey: z
+          .string()
+          .describe("The key of the issue to update (e.g., PROJ-123)"),
+        description: z
+          .string()
+          .min(1)
+          .describe("The new markdown/plain text description to set"),
+        labels: z
+          .array(z.string().min(1))
+          .optional()
+          .describe("Optional labels to set"),
       },
       async ({ issueKey, description, labels }) => {
         try {
           console.log(`Updating description for issue ${issueKey}`);
-          await this.jiraService.updateIssueDescription(issueKey, description, labels);
+          await this.jiraService.updateIssueDescription(
+            issueKey,
+            description,
+            labels,
+          );
           return {
             content: [
               {
@@ -740,10 +931,14 @@ export class JiraMcpServer {
       "assign_issue",
       "Assign a Jira issue to a workspace member",
       {
-        issueKey: z.string().describe("The key of the issue to assign (e.g., PROJ-123)"),
+        issueKey: z
+          .string()
+          .describe("The key of the issue to assign (e.g., PROJ-123)"),
         assignee: z
           .string()
-          .describe("The user to assign the issue to (email, name, or account ID)"),
+          .describe(
+            "The user to assign the issue to (email, name, or account ID)",
+          ),
       },
       async ({ issueKey, assignee }) => {
         try {
@@ -819,7 +1014,10 @@ export class JiraMcpServer {
           console.log("Fetching issue link types");
           const response = await this.jiraService.getIssueLinkTypes();
           const linkTypes = response.issueLinkTypes
-            .map((type) => `- ${type.name}: "${type.outward}" / "${type.inward}" (ID: ${type.id})`)
+            .map(
+              (type) =>
+                `- ${type.name}: "${type.outward}" / "${type.inward}" (ID: ${type.id})`,
+            )
             .join("\n");
           return {
             content: [
@@ -866,12 +1064,21 @@ export class JiraMcpServer {
         comment: z
           .string()
           .optional()
-          .describe("Optional comment to add to the outward issue explaining the link"),
+          .describe(
+            "Optional comment to add to the outward issue explaining the link",
+          ),
       },
       async ({ inwardIssue, outwardIssue, linkType, comment }) => {
         try {
-          console.log(`Linking ${inwardIssue} to ${outwardIssue} with type "${linkType}"`);
-          await this.jiraService.linkIssues(inwardIssue, outwardIssue, linkType, comment);
+          console.log(
+            `Linking ${inwardIssue} to ${outwardIssue} with type "${linkType}"`,
+          );
+          await this.jiraService.linkIssues(
+            inwardIssue,
+            outwardIssue,
+            linkType,
+            comment,
+          );
           return {
             content: [
               {
@@ -899,8 +1106,13 @@ export class JiraMcpServer {
       "Create a new sprint for a board",
       {
         name: z.string().min(1).describe("Sprint name"),
-        originBoardId: z.number().describe("Board ID where the sprint will be created"),
-        startDate: z.string().optional().describe("Sprint start date (ISO 8601)"),
+        originBoardId: z
+          .number()
+          .describe("Board ID where the sprint will be created"),
+        startDate: z
+          .string()
+          .optional()
+          .describe("Sprint start date (ISO 8601)"),
         endDate: z.string().optional().describe("Sprint end date (ISO 8601)"),
         goal: z.string().optional().describe("Optional sprint goal"),
       },
@@ -916,7 +1128,9 @@ export class JiraMcpServer {
           });
           console.log(`Successfully created sprint ${response.name}`);
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error("Error creating sprint:", error);
@@ -943,7 +1157,9 @@ export class JiraMcpServer {
           console.log(`Fetching sprint ${sprintId}`);
           const response = await this.jiraService.getSprint(sprintId);
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error("Error fetching sprint:", error);
@@ -963,12 +1179,16 @@ export class JiraMcpServer {
       "get_project_sprint",
       "Get sprint details and validate it belongs to a project",
       {
-        projectKeyOrId: z.string().describe("Project key or ID used to validate sprint ownership"),
+        projectKeyOrId: z
+          .string()
+          .describe("Project key or ID used to validate sprint ownership"),
         sprintId: z.number().describe("Sprint ID to fetch"),
       },
       async ({ projectKeyOrId, sprintId }) => {
         try {
-          console.log(`Fetching sprint ${sprintId} for project ${projectKeyOrId}`);
+          console.log(
+            `Fetching sprint ${sprintId} for project ${projectKeyOrId}`,
+          );
           const sprint = await this.jiraService.getSprint(sprintId);
           const board = await this.jiraService.getBoard(sprint.originBoardId);
           const projectKey = board.location?.projectKey?.toLowerCase();
@@ -1048,7 +1268,10 @@ export class JiraMcpServer {
       "remove_issues_from_sprint",
       "Move issues out of a sprint back to the backlog",
       {
-        issues: z.array(z.string()).min(1).describe("Issue keys or IDs to remove from sprint"),
+        issues: z
+          .array(z.string())
+          .min(1)
+          .describe("Issue keys or IDs to remove from sprint"),
       },
       async ({ issues }) => {
         try {
@@ -1081,7 +1304,10 @@ export class JiraMcpServer {
       "Start a sprint by setting state to active",
       {
         sprintId: z.number().describe("Sprint ID to start"),
-        startDate: z.string().optional().describe("Sprint start date (ISO 8601)"),
+        startDate: z
+          .string()
+          .optional()
+          .describe("Sprint start date (ISO 8601)"),
         endDate: z.string().optional().describe("Sprint end date (ISO 8601)"),
         goal: z.string().optional().describe("Optional sprint goal"),
       },
@@ -1096,7 +1322,9 @@ export class JiraMcpServer {
             goal: goal ?? sprint.goal,
           });
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error("Error starting sprint:", error);
@@ -1117,7 +1345,10 @@ export class JiraMcpServer {
       "Complete a sprint by setting state to closed",
       {
         sprintId: z.number().describe("Sprint ID to complete"),
-        completeDate: z.string().optional().describe("Sprint completion date (ISO 8601)"),
+        completeDate: z
+          .string()
+          .optional()
+          .describe("Sprint completion date (ISO 8601)"),
         goal: z.string().optional().describe("Optional sprint goal"),
       },
       async ({ sprintId, completeDate, goal }) => {
@@ -1129,7 +1360,9 @@ export class JiraMcpServer {
             goal,
           });
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error("Error completing sprint:", error);
@@ -1151,26 +1384,40 @@ export class JiraMcpServer {
       {
         boardId: z.number().describe("Board ID that contains the sprint"),
         sprintId: z.number().describe("Sprint ID to fetch issues for"),
-        jql: z.string().optional().describe("Optional JQL query to filter sprint issues"),
+        jql: z
+          .string()
+          .optional()
+          .describe("Optional JQL query to filter sprint issues"),
         maxResults: z
           .number()
           .optional()
           .describe("Maximum number of issues to return (default: 50)"),
-        startAt: z.number().optional().describe("Starting index for pagination (default: 0)"),
+        startAt: z
+          .number()
+          .optional()
+          .describe("Starting index for pagination (default: 0)"),
       },
       async ({ boardId, sprintId, jql, maxResults, startAt }) => {
         try {
-          console.log(`Fetching issues for sprint ${sprintId} on board ${boardId}`);
-          const response = await this.jiraService.getSprintIssues(boardId, sprintId, {
-            jql,
-            maxResults,
-            startAt,
-          });
+          console.log(
+            `Fetching issues for sprint ${sprintId} on board ${boardId}`,
+          );
+          const response = await this.jiraService.getSprintIssues(
+            boardId,
+            sprintId,
+            {
+              jql,
+              maxResults,
+              startAt,
+            },
+          );
           console.log(
             `Successfully fetched ${response.issues.length} issues from sprint ${sprintId}`,
           );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error("Error fetching sprint issues:", error);
@@ -1191,12 +1438,18 @@ export class JiraMcpServer {
       "Get all issues from a specific board",
       {
         boardId: z.number().describe("The ID of the Jira board"),
-        jql: z.string().optional().describe("Optional JQL query to filter issues"),
+        jql: z
+          .string()
+          .optional()
+          .describe("Optional JQL query to filter issues"),
         maxResults: z
           .number()
           .optional()
           .describe("Maximum number of issues to return (default: 50)"),
-        startAt: z.number().optional().describe("Starting index for pagination (default: 0)"),
+        startAt: z
+          .number()
+          .optional()
+          .describe("Starting index for pagination (default: 0)"),
       },
       async ({ boardId, jql, maxResults, startAt }) => {
         try {
@@ -1210,7 +1463,9 @@ export class JiraMcpServer {
             `Successfully fetched ${response.issues.length} issues from board ${boardId}`,
           );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error fetching board issues for ${boardId}:`, error);
@@ -1239,7 +1494,10 @@ export class JiraMcpServer {
           .number()
           .optional()
           .describe("Maximum number of sprints to return (default: 50)"),
-        startAt: z.number().optional().describe("Starting index for pagination (default: 0)"),
+        startAt: z
+          .number()
+          .optional()
+          .describe("Starting index for pagination (default: 0)"),
       },
       async ({ boardId, state, maxResults, startAt }) => {
         try {
@@ -1254,7 +1512,9 @@ export class JiraMcpServer {
             `Successfully fetched ${response.values.length} sprints from board ${boardId}`,
           );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error fetching board sprints for ${boardId}:`, error);
@@ -1274,7 +1534,9 @@ export class JiraMcpServer {
       "get_project_sprints",
       "Get sprints for all boards in a project",
       {
-        projectKeyOrId: z.string().describe("Project key or ID to filter boards"),
+        projectKeyOrId: z
+          .string()
+          .describe("Project key or ID to filter boards"),
         state: z
           .enum(["future", "active", "closed"])
           .optional()
@@ -1283,12 +1545,19 @@ export class JiraMcpServer {
           .number()
           .optional()
           .describe("Maximum number of sprints per board (default: 50)"),
-        startAt: z.number().optional().describe("Starting index per board (default: 0)"),
+        startAt: z
+          .number()
+          .optional()
+          .describe("Starting index per board (default: 0)"),
       },
       async ({ projectKeyOrId, state, maxResults, startAt }) => {
         try {
           console.log(`Fetching sprints for project ${projectKeyOrId}`);
-          const boardsResponse = await this.jiraService.getAllBoards(50, 0, projectKeyOrId);
+          const boardsResponse = await this.jiraService.getAllBoards(
+            50,
+            0,
+            projectKeyOrId,
+          );
           const results = await Promise.all(
             boardsResponse.values.map(async (board) => {
               const sprints = await this.jiraService.getBoardSprints(
@@ -1325,7 +1594,10 @@ export class JiraMcpServer {
             ],
           };
         } catch (error) {
-          console.error(`Error fetching project sprints for ${projectKeyOrId}:`, error);
+          console.error(
+            `Error fetching project sprints for ${projectKeyOrId}:`,
+            error,
+          );
           return {
             content: [
               {
@@ -1346,8 +1618,14 @@ export class JiraMcpServer {
         issues: z
           .array(z.string())
           .describe('Array of issue keys to move (e.g., ["PROJ-1", "PROJ-2"])'),
-        rankAfterIssue: z.string().optional().describe("Position issues after this issue key"),
-        rankBeforeIssue: z.string().optional().describe("Position issues before this issue key"),
+        rankAfterIssue: z
+          .string()
+          .optional()
+          .describe("Position issues after this issue key"),
+        rankBeforeIssue: z
+          .string()
+          .optional()
+          .describe("Position issues before this issue key"),
       },
       async ({ boardId, issues, rankAfterIssue, rankBeforeIssue }) => {
         try {
@@ -1358,7 +1636,9 @@ export class JiraMcpServer {
             rankAfterIssue,
             rankBeforeIssue,
           );
-          console.log(`Successfully moved ${issues.length} issues to board ${boardId}`);
+          console.log(
+            `Successfully moved ${issues.length} issues to board ${boardId}`,
+          );
           return {
             content: [
               {
@@ -1419,12 +1699,18 @@ export class JiraMcpServer {
       "Get issues from a board's backlog (issues not assigned to any active or future sprint)",
       {
         boardId: z.number().describe("The ID of the Jira board"),
-        jql: z.string().optional().describe("Optional JQL query to filter backlog issues"),
+        jql: z
+          .string()
+          .optional()
+          .describe("Optional JQL query to filter backlog issues"),
         maxResults: z
           .number()
           .optional()
           .describe("Maximum number of issues to return (default: 50)"),
-        startAt: z.number().optional().describe("Starting index for pagination (default: 0)"),
+        startAt: z
+          .number()
+          .optional()
+          .describe("Starting index for pagination (default: 0)"),
       },
       async ({ boardId, jql, maxResults, startAt }) => {
         try {
@@ -1438,7 +1724,9 @@ export class JiraMcpServer {
             `Successfully fetched ${response.issues.length} backlog issues from board ${boardId}`,
           );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error(`Error fetching board backlog for ${boardId}:`, error);
@@ -1460,26 +1748,42 @@ export class JiraMcpServer {
       "search_confluence_pages",
       "Search Confluence pages by title, space, or status",
       {
-        title: z.string().optional().describe("Text to search for in page titles"),
-        spaceId: z.string().optional().describe("Confluence space ID to limit the search"),
+        title: z
+          .string()
+          .optional()
+          .describe("Text to search for in page titles"),
+        spaceId: z
+          .string()
+          .optional()
+          .describe("Confluence space ID to limit the search"),
         spaceKey: z
           .string()
           .optional()
-          .describe("Confluence space key (e.g., 'ALFA'). Ignored if spaceId is provided"),
-        limit: z.number().optional().describe("Maximum number of results (default: 25)"),
+          .describe(
+            "Confluence space key (e.g., 'ALFA'). Ignored if spaceId is provided",
+          ),
+        limit: z
+          .number()
+          .optional()
+          .describe("Maximum number of results (default: 25)"),
         cursor: z
           .string()
           .optional()
-          .describe("Pagination cursor from a previous search response for next page"),
+          .describe(
+            "Pagination cursor from a previous search response for next page",
+          ),
       },
       async ({ title, spaceId, spaceKey, limit, cursor }) => {
         try {
           let resolvedSpaceId = spaceId;
           if (!resolvedSpaceId && spaceKey) {
-            resolvedSpaceId = await this.confluenceService.resolveSpaceId(spaceKey);
+            resolvedSpaceId =
+              await this.confluenceService.resolveSpaceId(spaceKey);
           }
 
-          console.log(`Searching Confluence pages: title=${title}, spaceId=${resolvedSpaceId}`);
+          console.log(
+            `Searching Confluence pages: title=${title}, spaceId=${resolvedSpaceId}`,
+          );
           const response = await this.confluenceService.searchPages({
             title,
             spaceId: resolvedSpaceId,
@@ -1488,7 +1792,9 @@ export class JiraMcpServer {
           });
           console.log(`Found ${response.results.length} Confluence pages`);
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error("Error searching Confluence pages:", error);
@@ -1512,16 +1818,30 @@ export class JiraMcpServer {
           .array(z.string())
           .optional()
           .describe("Space keys to filter by (e.g., ['SCRUM', 'DEV'])"),
-        type: z.string().optional().describe("Filter by space type (e.g., 'global', 'personal')"),
-        limit: z.number().optional().describe("Maximum number of results (default: 25)"),
+        type: z
+          .string()
+          .optional()
+          .describe("Filter by space type (e.g., 'global', 'personal')"),
+        limit: z
+          .number()
+          .optional()
+          .describe("Maximum number of results (default: 25)"),
       },
       async ({ keys, type, limit }) => {
         try {
-          console.log(`Fetching Confluence spaces: keys=${keys?.join(",")}, type=${type}`);
-          const response = await this.confluenceService.getSpaces({ keys, type, limit });
+          console.log(
+            `Fetching Confluence spaces: keys=${keys?.join(",")}, type=${type}`,
+          );
+          const response = await this.confluenceService.getSpaces({
+            keys,
+            type,
+            limit,
+          });
           console.log(`Found ${response.results.length} Confluence spaces`);
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error("Error fetching Confluence spaces:", error);
@@ -1541,16 +1861,28 @@ export class JiraMcpServer {
       "search_confluence_pages_cql",
       "Advanced search using Confluence CQL (Confluence Query Language). Supports operators like =, !=, ~, >, <, AND, OR. Example: space='ALFA' AND title~'Test*' OR type='blogpost'",
       {
-        cql: z.string().describe("CQL query string (e.g., \"space='ALFA' AND title~'Test'\")"),
-        limit: z.number().optional().describe("Maximum number of results (default: 25)"),
+        cql: z
+          .string()
+          .describe(
+            "CQL query string (e.g., \"space='ALFA' AND title~'Test'\")",
+          ),
+        limit: z
+          .number()
+          .optional()
+          .describe("Maximum number of results (default: 25)"),
       },
       async ({ cql, limit }) => {
         try {
           console.log(`CQL search: ${cql}`);
-          const response = await this.confluenceService.searchPagesWithCql(cql, limit);
+          const response = await this.confluenceService.searchPagesWithCql(
+            cql,
+            limit,
+          );
           console.log(`Found ${response.results.length} Confluence pages`);
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
           console.error("Error searching Confluence pages with CQL:", error);
@@ -1598,18 +1930,28 @@ export class JiraMcpServer {
       "get_confluence_page_ancestors",
       "Get ancestor pages in the Confluence page hierarchy",
       {
-        pageId: z.string().describe("The ID of the Confluence page to get ancestors for"),
+        pageId: z
+          .string()
+          .describe("The ID of the Confluence page to get ancestors for"),
       },
       async ({ pageId }) => {
         try {
           console.log(`Fetching Confluence page ancestors: ${pageId}`);
-          const ancestors = await this.confluenceService.getPageAncestors(pageId);
-          console.log(`Found ${ancestors.results.length} ancestors for page ${pageId}`);
+          const ancestors =
+            await this.confluenceService.getPageAncestors(pageId);
+          console.log(
+            `Found ${ancestors.results.length} ancestors for page ${pageId}`,
+          );
           return {
-            content: [{ type: "text", text: JSON.stringify(ancestors, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(ancestors, null, 2) },
+            ],
           };
         } catch (error) {
-          console.error(`Error fetching Confluence page ancestors for ${pageId}:`, error);
+          console.error(
+            `Error fetching Confluence page ancestors for ${pageId}:`,
+            error,
+          );
           return {
             content: [
               {
@@ -1627,18 +1969,31 @@ export class JiraMcpServer {
       "Get direct child pages of a Confluence page",
       {
         pageId: z.string().describe("The ID of the Confluence parent page"),
-        limit: z.number().optional().describe("Maximum number of results (default: 25)"),
+        limit: z
+          .number()
+          .optional()
+          .describe("Maximum number of results (default: 25)"),
       },
       async ({ pageId, limit }) => {
         try {
           console.log(`Fetching Confluence page children: ${pageId}`);
-          const children = await this.confluenceService.getPageChildren(pageId, limit);
-          console.log(`Found ${children.results.length} children for page ${pageId}`);
+          const children = await this.confluenceService.getPageChildren(
+            pageId,
+            limit,
+          );
+          console.log(
+            `Found ${children.results.length} children for page ${pageId}`,
+          );
           return {
-            content: [{ type: "text", text: JSON.stringify(children, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(children, null, 2) },
+            ],
           };
         } catch (error) {
-          console.error(`Error fetching Confluence page children for ${pageId}:`, error);
+          console.error(
+            `Error fetching Confluence page children for ${pageId}:`,
+            error,
+          );
           return {
             content: [
               {
@@ -1658,18 +2013,28 @@ export class JiraMcpServer {
         spaceId: z
           .string()
           .optional()
-          .describe("Confluence space numeric ID (use get_confluence_spaces to discover)"),
+          .describe(
+            "Confluence space numeric ID (use get_confluence_spaces to discover)",
+          ),
         spaceKey: z
           .string()
           .optional()
-          .describe("Confluence space key (e.g., 'PROJ', '~user'). Ignored if spaceId is provided"),
+          .describe(
+            "Confluence space key (e.g., 'PROJ', '~user'). Ignored if spaceId is provided",
+          ),
         title: z.string().min(1).describe("The title of the new page"),
-        body: z.string().min(1).describe("Page content in storage or atlas_doc_format"),
+        body: z
+          .string()
+          .min(1)
+          .describe("Page content in storage or atlas_doc_format"),
         representation: z
           .enum(["storage", "atlas_doc_format"])
           .optional()
           .describe("Content format representation (default: storage)"),
-        parentId: z.string().optional().describe("Optional parent page ID for hierarchy"),
+        parentId: z
+          .string()
+          .optional()
+          .describe("Optional parent page ID for hierarchy"),
       },
       async ({ spaceId, spaceKey, title, body, representation, parentId }) => {
         try {
@@ -1677,7 +2042,8 @@ export class JiraMcpServer {
 
           if (!resolvedSpaceId && spaceKey) {
             console.log(`Resolving space key "${spaceKey}" to space ID...`);
-            resolvedSpaceId = await this.confluenceService.resolveSpaceId(spaceKey);
+            resolvedSpaceId =
+              await this.confluenceService.resolveSpaceId(spaceKey);
             if (!resolvedSpaceId) {
               return {
                 content: [
@@ -1688,7 +2054,9 @@ export class JiraMcpServer {
                 ],
               };
             }
-            console.log(`Resolved space key "${spaceKey}" to ID "${resolvedSpaceId}"`);
+            console.log(
+              `Resolved space key "${spaceKey}" to ID "${resolvedSpaceId}"`,
+            );
           }
 
           if (!resolvedSpaceId) {
@@ -1702,7 +2070,9 @@ export class JiraMcpServer {
             };
           }
 
-          console.log(`Creating Confluence page: ${title} in space ${resolvedSpaceId}`);
+          console.log(
+            `Creating Confluence page: ${title} in space ${resolvedSpaceId}`,
+          );
           const page = await this.confluenceService.createPage({
             spaceId: resolvedSpaceId,
             title,
@@ -1734,10 +2104,15 @@ export class JiraMcpServer {
       {
         pageId: z.string().describe("The ID of the Confluence page to update"),
         title: z.string().min(1).describe("The new title for the page"),
-        body: z.string().min(1).describe("New page content in storage or atlas_doc_format"),
+        body: z
+          .string()
+          .min(1)
+          .describe("New page content in storage or atlas_doc_format"),
         version: z
           .number()
-          .describe("Current version number of the page (required for conflict detection)"),
+          .describe(
+            "Current version number of the page (required for conflict detection)",
+          ),
         representation: z
           .enum(["storage", "atlas_doc_format"])
           .optional()
@@ -1814,7 +2189,10 @@ export class JiraMcpServer {
         try {
           console.log(`Generating link for Confluence page: ${pageId}`);
           const page = await this.confluenceService.getPage(pageId);
-          const webUrl = this.confluenceService.getPageWebUrl(this.atlassianBaseUrl, page);
+          const webUrl = this.confluenceService.getPageWebUrl(
+            this.atlassianBaseUrl,
+            page,
+          );
           return {
             content: [
               {
@@ -1850,14 +2228,19 @@ export class JiraMcpServer {
       "link_confluence_page_to_issue",
       'Add a Confluence page link to a Jira issue\'s "Linked work items" panel via the remote link API',
       {
-        issueKey: z.string().describe("The Jira issue key to link to (e.g., PROJ-123)"),
+        issueKey: z
+          .string()
+          .describe("The Jira issue key to link to (e.g., PROJ-123)"),
         pageId: z.string().describe("The ID of the Confluence page to link"),
       },
       async ({ issueKey, pageId }) => {
         try {
           console.log(`Linking Confluence page ${pageId} to issue ${issueKey}`);
           const page = await this.confluenceService.getPage(pageId);
-          const webUrl = this.confluenceService.getPageWebUrl(this.atlassianBaseUrl, page);
+          const webUrl = this.confluenceService.getPageWebUrl(
+            this.atlassianBaseUrl,
+            page,
+          );
           const remoteLink = await this.jiraService.addRemoteLink(issueKey, {
             url: webUrl,
             title: page.title,
@@ -1882,7 +2265,10 @@ export class JiraMcpServer {
             ],
           };
         } catch (error) {
-          console.error(`Error linking Confluence page ${pageId} to issue ${issueKey}:`, error);
+          console.error(
+            `Error linking Confluence page ${pageId} to issue ${issueKey}:`,
+            error,
+          );
           return {
             content: [
               {
@@ -1901,18 +2287,28 @@ export class JiraMcpServer {
       {
         issueKey: z
           .string()
-          .describe("The Jira issue key to search for in Confluence (e.g., PROJECT-123)"),
+          .describe(
+            "The Jira issue key to search for in Confluence (e.g., PROJECT-123)",
+          ),
       },
       async ({ issueKey }) => {
         try {
           console.log(`Searching Confluence pages for issue: ${issueKey}`);
-          const response = await this.confluenceService.searchPagesByTitle(issueKey);
-          console.log(`Found ${response.results.length} pages referencing ${issueKey}`);
+          const response =
+            await this.confluenceService.searchPagesByTitle(issueKey);
+          console.log(
+            `Found ${response.results.length} pages referencing ${issueKey}`,
+          );
           return {
-            content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(response, null, 2) },
+            ],
           };
         } catch (error) {
-          console.error(`Error finding Confluence pages for issue ${issueKey}:`, error);
+          console.error(
+            `Error finding Confluence pages for issue ${issueKey}:`,
+            error,
+          );
           return {
             content: [
               {
@@ -1929,11 +2325,15 @@ export class JiraMcpServer {
       "map_jira_project_to_confluence_space",
       "Map a Jira project key to the matching Confluence space (Jira projects often share the same key with a Confluence space)",
       {
-        projectKey: z.string().describe("The Jira project key to map (e.g., PROJ)"),
+        projectKey: z
+          .string()
+          .describe("The Jira project key to map (e.g., PROJ)"),
       },
       async ({ projectKey }) => {
         try {
-          console.log(`Mapping Jira project key "${projectKey}" to Confluence space`);
+          console.log(
+            `Mapping Jira project key "${projectKey}" to Confluence space`,
+          );
 
           // First, try direct key match
           const spaces = await this.confluenceService.getSpaces({
@@ -1966,9 +2366,13 @@ export class JiraMcpServer {
           }
 
           // Fall back to matching by project name
-          console.log(`No direct key match for "${projectKey}", trying name match...`);
+          console.log(
+            `No direct key match for "${projectKey}", trying name match...`,
+          );
           const project = await this.jiraService.getProjectByKey(projectKey);
-          const allSpaces = await this.confluenceService.getSpaces({ limit: 50 });
+          const allSpaces = await this.confluenceService.getSpaces({
+            limit: 50,
+          });
           const nameMatch = allSpaces.results.find(
             (s) => s.name.toLowerCase() === project.name.toLowerCase(),
           );
@@ -2022,7 +2426,10 @@ export class JiraMcpServer {
             ],
           };
         } catch (error) {
-          console.error(`Error mapping project ${projectKey} to Confluence space:`, error);
+          console.error(
+            `Error mapping project ${projectKey} to Confluence space:`,
+            error,
+          );
           return {
             content: [
               {
@@ -2063,7 +2470,9 @@ function formatToolError(error: unknown): string {
   }
 }
 
-function isStatusError(value: unknown): value is { status: number; err: string } {
+function isStatusError(
+  value: unknown,
+): value is { status: number; err: string } {
   if (!value || typeof value !== "object") {
     return false;
   }
